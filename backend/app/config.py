@@ -1,4 +1,5 @@
 """Central configuration, loaded from environment / .env."""
+
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -23,6 +24,8 @@ class Settings(BaseSettings):
     # Server
     scan_interval_seconds: int = 30
     allowed_origins: str = "http://localhost:5173,http://localhost:4000"
+    WANDB_WEAVE_PROJECT: str | None = None
+    WANDB_API_KEY: str | None = None
 
     @property
     def origins(self) -> list[str]:
