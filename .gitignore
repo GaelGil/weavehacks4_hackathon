@@ -35,3 +35,4 @@ __pycache__/
 npm-debug.log*
 notes.txt
 frontend/.env
+/frontend/node_modules
