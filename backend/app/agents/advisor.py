@@ -13,6 +13,7 @@ import weave
 from agents import Agent, Runner
 from pydantic import BaseModel, Field
 
+from ..config import get_settings
 from ..models import ResearchFindings, ScamVerdict, ScreenFacts, SimilarExample, SuggestedAction
 from ._helpers import vision_input
 
@@ -24,7 +25,7 @@ class AdvisorDecision(BaseModel):
 
 advisor_agent = Agent(
     name="Advisor",
-    model="gpt-4o",
+    model=get_settings().openai_model,
     instructions=(
         "You are a calm, friendly safety assistant for a non-technical user (e.g. an elderly "
         "person). You are given: the screenshot, structured FACTS about it, and RESEARCH findings "
@@ -92,7 +93,7 @@ async def decide(
 # ---- Free-form chat agent for the CopilotKit conversation ----
 chat_agent = Agent(
     name="AdvisorChat",
-    model="gpt-4o",
+    model=get_settings().openai_model,
     instructions=(
         "You are a calm, friendly safety assistant for a non-technical user. Answer their questions "
         "about whether something is a scam and what to do, conversationally and in simple language. "

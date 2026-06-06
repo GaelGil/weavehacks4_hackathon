@@ -10,12 +10,13 @@ from __future__ import annotations
 import weave
 from agents import Agent, Runner
 
+from ..config import get_settings
 from ..models import ScreenFacts
 from ._helpers import vision_input
 
 collector_agent = Agent(
     name="CollectDataAgent",
-    model="gpt-4o",
+    model=get_settings().openai_vision_model,
     instructions=(
         "You are an observation agent. Look at the screenshot and extract the facts into the "
         "structured fields. Be precise and literal — transcribe exactly what you see.\n"

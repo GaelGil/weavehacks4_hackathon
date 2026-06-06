@@ -12,12 +12,13 @@ from __future__ import annotations
 import weave
 from agents import Agent, Runner
 
+from ..config import get_settings
 from ..models import RedactionResult
 from ._helpers import vision_input
 
 redactor_agent = Agent(
     name="PrivacyRedactor",
-    model="gpt-4o",
+    model=get_settings().openai_vision_model,
     instructions=(
         "You protect the user's privacy. Look at the screenshot and determine whether it "
         "contains SENSITIVE personal information such as passwords, full credit-card or bank "

@@ -15,6 +15,7 @@ import json
 import weave
 from agents import Agent, Runner
 
+from ..config import get_settings
 from ..models import ResearchFindings, ScreenFacts, SimilarExample
 from ..services.redis_store import get_store
 
@@ -30,7 +31,7 @@ except Exception:  # noqa: BLE001
 def _build_agent(with_web: bool) -> Agent:
     return Agent(
         name="ResearchAgent",
-        model="gpt-4o",
+        model=get_settings().openai_model,
         tools=_WEB_TOOLS if with_web else [],
         instructions=(
             "You are a research agent vetting whether on-screen content is legitimate or a scam. "
