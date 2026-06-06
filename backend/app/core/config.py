@@ -58,6 +58,8 @@ class Settings(BaseSettings):
     REDIS_VECTOR_DISTANCE_THRESHOLD: float = 0.35
     SCAM_VECTOR_TOP_K: int = 5
     MAX_IMAGE_UPLOAD_BYTES: int = 8_000_000
+    WANDB_API_KEY: str | None = None
+    WANDB_WEAVE_PROJECT: str | None = None
 
     # Database configuration - supports both individual params and full URL
     DATABASE_URL: PostgresDsn | None = None
