@@ -6,6 +6,8 @@ import weave
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.main import api_router
+
 from .config import get_settings
 from .services.redis_store import get_store
 
@@ -53,3 +55,4 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.include_router(api_router, prefix=settings.API_V1_STR)

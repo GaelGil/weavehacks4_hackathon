@@ -20,7 +20,7 @@ class Settings(BaseSettings):
 
     # Redis
     redis_url: str = "redis://localhost:6379"
-
+    API_V1_STR: str = "/api/v1"
     # Server
     scan_interval_seconds: int = 30
     allowed_origins: str = "http://localhost:5173,http://localhost:4000"
