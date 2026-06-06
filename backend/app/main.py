@@ -1,23 +1,21 @@
-"""ScamGuard FastAPI backend.
-
-    uvicorn app.main:app --reload --port 8000
-"""
-from __future__ import annotations
-
+import logging
+import os
 from contextlib import asynccontextmanager
 
+import weave
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from .agents import advisor, pipeline
 from .config import get_settings
 from .copilot import mount_copilotkit
 from .models import AdvisorRequest, ContactRequest, ScanRequest, ScanResult
 from .services.redis_store import get_store
 
+logger = logging.getLogger(__name__)
+settings = get_settings()
+
 
 def _init_weave() -> None:
-    settings = get_settings()
     if settings.weave_disabled:
         print("[weave] disabled via WEAVE_DISABLED")
         return
@@ -40,12 +38,19 @@ async def lifespan(app: FastAPI):
     yield
 
 
+if settings.WANDB_API_KEY and settings.WANDB_WEAVE_PROJECT:
+    os.environ.setdefault("WANDB_API_KEY", settings.WANDB_API_KEY)
+    try:
+        weave.init(settings.WANDB_WEAVE_PROJECT)
+    except Exception as exc:
+        logger.warning("Failed to initialize Weave: %s", exc)
+
+
 app = FastAPI(title="ScamGuard", version="0.1.0", lifespan=lifespan)
 
-_settings = get_settings()
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_settings.origins,
+    allow_origins=settings.origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
