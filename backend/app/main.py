@@ -7,6 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import get_settings
+from .copilot import mount_copilotkit
+from .models import AdvisorRequest, ContactRequest, ScanRequest, ScanResult
 from .services.redis_store import get_store
 
 logger = logging.getLogger(__name__)
@@ -53,3 +55,49 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.get("/health")
+async def health() -> dict:
+    store = get_store()
+    return {
+        "ok": True,
+        "redis": store.r is not None,
+        "scan_interval_seconds": _settings.scan_interval_seconds,
+    }
+
+
+@app.post("/scan", response_model=ScanResult)
+async def scan(req: ScanRequest) -> ScanResult:
+    """Run the full redact -> classify -> vector-search -> advise pipeline."""
+    return await pipeline.run_scan(req)
+
+
+@app.post("/contacts")
+async def set_contact(req: ContactRequest) -> dict:
+    """Mark a sender (email address or domain) as trusted/untrusted."""
+    get_store().set_contact(req.identifier.strip().lower(), req.trusted)
+    return {"ok": True, "identifier": req.identifier.strip().lower(), "trusted": req.trusted}
+
+
+@app.get("/contacts/{identifier}")
+async def get_contact(identifier: str) -> dict:
+    trusted = get_store().get_contact(identifier.strip().lower())
+    return {"identifier": identifier.strip().lower(), "trusted": trusted}
+
+
+@app.post("/advisor")
+async def advisor_chat(req: AdvisorRequest) -> dict:
+    """Plain REST chat fallback (also used if CopilotKit isn't wired up yet)."""
+    context = ""
+    if req.scan:
+        context = (
+            f"Verdict: {req.scan.verdict} (risk {req.scan.risk_score}). "
+            f"Reasons: {'; '.join(req.scan.reasons)}. Advice given: {req.scan.advice}"
+        )
+    answer = await advisor.chat(req.question, context)
+    return {"answer": answer}
+
+
+# Optional: CopilotKit remote endpoint at /copilotkit
+mount_copilotkit(app)

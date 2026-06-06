@@ -1,5 +1,4 @@
 """Central configuration, loaded from environment / .env."""
-
 from functools import lru_cache
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -10,7 +9,8 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"
+    openai_model: str = "gpt-4o"               # reasoning/judgment (advisor, researcher)
+    openai_vision_model: str = "gpt-4o-mini"   # cheap screen scraping (collector, redactor)
     openai_embed_model: str = "text-embedding-3-small"
 
     # Weave
@@ -30,6 +30,15 @@ class Settings(BaseSettings):
     @property
     def origins(self) -> list[str]:
         return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
+
+    def model_post_init(self, __context) -> None:
+        # The OpenAI Agents SDK / OpenAI client read os.environ directly, not this
+        # Settings object. Mirror the loaded keys into the process environment so
+        # they pick them up. (Only set if non-empty; never clobber a real env var.)
+        if self.openai_api_key and not os.environ.get("OPENAI_API_KEY"):
+            os.environ["OPENAI_API_KEY"] = self.openai_api_key
+        if self.wandb_api_key and not os.environ.get("WANDB_API_KEY"):
+            os.environ["WANDB_API_KEY"] = self.wandb_api_key
 
 
 @lru_cache
