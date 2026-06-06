@@ -1,0 +1,8 @@
+{"context_text": "Email from 'Apple Support <no-reply@apple-verify.ru>': Your Apple ID is locked. Verify within 24h or it will be deleted. Click http://apple-verify.ru/login", "expected": "scam"}
+{"context_text": "Email from 'mom@gmail.com': Hi honey, dinner at 6 on Sunday? Love you.", "expected": "safe"}
+{"context_text": "Popup: WARNING! Your computer is infected with 5 viruses. Call Microsoft at 1-800-555-0199 immediately.", "expected": "scam"}
+{"context_text": "Newsletter from 'The New York Times': Your morning briefing for today.", "expected": "safe"}
+{"context_text": "SMS: USPS: your package is held. Pay $1.99 redelivery fee at http://usps-track.help", "expected": "scam"}
+{"context_text": "Slack message from coworker: Can you review my PR when you get a chance?", "expected": "safe"}
+{"context_text": "Email: Congratulations! You won a $1000 gift card. Enter your card number to claim.", "expected": "scam"}
+{"context_text": "Calendar invite: Dentist appointment Tuesday 10am.", "expected": "safe"}

@@ -1,6 +1,9 @@
-const { app, BrowserWindow, desktopCapturer, session, ipcMain } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session, screen, ipcMain } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
+
+const isDev = process.argv.includes('--dev');
+const VITE_DEV_URL = 'http://localhost:5173';
 
 // W&B Weave — initialize before any modules load so auto-instrumentation hooks in.
 // Requires WANDB_API_KEY env var. Silently skipped if package not installed.
@@ -47,10 +50,13 @@ function createMainWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-
-  if (process.argv.includes('--dev')) {
+  if (isDev) {
+    // React renderer served by Vite (npm run dev:vite).
+    mainWindow.loadURL(VITE_DEV_URL);
     mainWindow.webContents.openDevTools();
+  } else {
+    // Production: load the built renderer bundle.
+    mainWindow.loadFile(path.join(__dirname, 'renderer', 'dist', 'index.html'));
   }
 }
 
@@ -71,25 +77,24 @@ function createOverlayWindow() {
 
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
   // Pass-through mouse events so the user can still use the desktop normally.
-  // Temporarily lifted to { forward: false } when an undismissable alert is shown.
+  // Temporarily lifted when an undismissable alert needs interaction.
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 }
 
 // ---------------------------------------------------------------------------
-// Alert routing — single path for all four detection pillars
+// Alert routing — single path for all detection pillars
 // ---------------------------------------------------------------------------
 
 function dispatchAlert(type, data) {
   const alert = buildAlert(type, data);
 
-  // Let mouse events reach the overlay for dismissable alerts
   if (overlayWindow) {
     const needsClick = alert.dismissable !== false;
     overlayWindow.setIgnoreMouseEvents(!needsClick, { forward: true });
     overlayWindow.webContents.send('show-alert', alert);
   }
 
-  // Mirror to the main dashboard so it can update its status panel
+  // Mirror to the main dashboard so the React UI can update its status panel.
   if (mainWindow) {
     mainWindow.webContents.send('scamguard-alert', alert);
   }
@@ -109,7 +114,6 @@ async function runScreenAnalysis() {
     detectorState.screenAnalysis.lastResult = result;
 
     if (result.suspicious) {
-      const severity = result.severity === 'critical' ? 'SCREEN_ANALYSIS' : 'SCREEN_ANALYSIS';
       dispatchAlert('SCREEN_ANALYSIS', result);
     }
   } catch (err) {
@@ -169,7 +173,25 @@ function startNetworkMonitor() {
 }
 
 // ---------------------------------------------------------------------------
-// IPC handlers — renderer / agent can query and control the detection layer
+// IPC — on-demand screen capture for the React "Check my screen" button
+// ---------------------------------------------------------------------------
+
+ipcMain.handle('capture-screen', async () => {
+  const { size, scaleFactor } = screen.getPrimaryDisplay();
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: Math.round(size.width * scaleFactor),
+      height: Math.round(size.height * scaleFactor),
+    },
+  });
+  const primary = sources[0];
+  if (!primary) throw new Error('No screen source available');
+  return primary.thumbnail.toPNG().toString('base64');
+});
+
+// ---------------------------------------------------------------------------
+// IPC — renderer / agent control surface for the detection layer
 // ---------------------------------------------------------------------------
 
 ipcMain.handle('get-protection-status', () => ({
@@ -186,14 +208,13 @@ ipcMain.handle('toggle-detector', (_, { name, enabled }) => {
 });
 
 ipcMain.on('dismiss-alert', () => {
-  // Restore pass-through once alert is dismissed
   if (overlayWindow) {
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   }
 });
 
 // ---------------------------------------------------------------------------
-// Auto-updater (existing behaviour preserved)
+// Auto-updater
 // ---------------------------------------------------------------------------
 
 function setupAutoUpdater() {
@@ -246,7 +267,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
   });
 
-  if (!process.argv.includes('--dev')) {
+  if (!isDev) {
     autoUpdater.checkForUpdatesAndNotify();
   }
 });
