@@ -31,6 +31,7 @@ dependencies = [
     "composio>=0.10.7",
     "wikipedia>=1.4.0",
     "slowapi>=0.1.9",
+    "weave>=0.51.54",
 ]
 
 [tool.uv]
