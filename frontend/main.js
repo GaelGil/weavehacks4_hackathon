@@ -273,7 +273,6 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.whenReady().then(() => {
   createMainWindow();
-  createOverlayWindow();
   setupAutoUpdater();
 
   startNetworkMonitor();
