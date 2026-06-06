@@ -26,6 +26,7 @@ dependencies = [
     "fal-client>=0.7.0",
     "pillow>=11.3.0",
     "openai>=2.8.1",
+    "redis[hiredis]>=5.2.1",
     "google-genai>=1.57.0",
     "composio>=0.10.7",
     "wikipedia>=1.4.0",
