@@ -83,3 +83,4 @@ async def advisor_chat(req: AdvisorRequest) -> dict:
 
 # Optional: CopilotKit remote endpoint at /copilotkit
 mount_copilotkit(app)
+app.include_router(api_router, prefix=settings.API_V1_STR)

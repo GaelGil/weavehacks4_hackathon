@@ -52,7 +52,12 @@ class Settings(BaseSettings):
     OPENAI_API_KEY: str | None = None
     OPENAI_CHAT_MODEL: str = "gpt-4.1-mini"
     OPENAI_VISION_MODEL: str = "gpt-4.1-mini"
+    OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
     REDIS_URL: str | None = None
+    REDIS_INDEX_NAME: str = "scam_vectors"
+    REDIS_VECTOR_DISTANCE_THRESHOLD: float = 0.35
+    SCAM_VECTOR_TOP_K: int = 5
+    MAX_IMAGE_UPLOAD_BYTES: int = 8_000_000
 
     # Database configuration - supports both individual params and full URL
     DATABASE_URL: PostgresDsn | None = None

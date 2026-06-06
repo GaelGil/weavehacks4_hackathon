@@ -6,6 +6,8 @@ from sqlalchemy import desc
 from sqlmodel import Session, select
 
 from app.api.scamdetect.contact_store import get_contacts, save_contacts
+from app.api.scamdetect.openai_service import analyze_image_bytes, embed_text
+from app.api.scamdetect.redis_vector_store import RedisScamVectorStore
 from app.api.websocket.ConnectionManager import manager
 from app.core.config import settings
 from app.database.db import engine
@@ -16,13 +18,13 @@ from app.database.schemas.Scan import (
     ScamSearchRequest,
     ScamSearchResponse,
     ScamSearchResult,
-    ScanCreate,
     ScanList,
     ScanRead,
     ScanRiskLevel,
     ScanStatus,
     TrustedContact,
     TrustedContactsResponse,
+    VisionAnalysisResult,
 )
 from app.utils import send_email
 
@@ -31,16 +33,25 @@ class ScanService:
     def __init__(self, session: Session):
         self.session = session
         self.manager = manager
+        self.vector_store = RedisScamVectorStore()
 
-    def create_scan(self, scan_in: ScanCreate) -> ScanRead:
-        scan = Scan.model_validate(scan_in, update={"status": ScanStatus.PENDING})
+    def create_scan(self, session_id: str, source_text: str | None) -> ScanRead:
+        scan = Scan(
+            session_id=session_id,
+            source_type="image",
+            source_text=source_text,
+            status=ScanStatus.PENDING,
+        )
         self.session.add(scan)
         self.session.commit()
         self.session.refresh(scan)
         return ScanRead.model_validate(scan)
 
-    def list_scans(self) -> ScanList:
-        scans = self.session.exec(select(Scan).order_by(desc(Scan.created_at))).all()
+    def list_scans(self, session_id: str | None = None) -> ScanList:
+        statement = select(Scan).order_by(desc(Scan.created_at))
+        if session_id:
+            statement = statement.where(Scan.session_id == session_id)
+        scans = self.session.exec(statement).all()
         return ScanList(scans=[ScanRead.model_validate(scan) for scan in scans])
 
     def get_scan(self, scan_id: uuid.UUID) -> ScanRead:
@@ -50,27 +61,24 @@ class ScanService:
         return ScanRead.model_validate(scan)
 
     def search_scams(self, search_in: ScamSearchRequest) -> ScamSearchResponse:
-        query = search_in.query.lower()
-        scans = self.session.exec(select(Scan).order_by(desc(Scan.created_at))).all()
-        matches = []
-        for scan in scans:
-            haystack = " ".join(
-                part
-                for part in [scan.summary, scan.source_text, scan.scam_type]
-                if part is not None
-            ).lower()
-            if query in haystack:
-                matches.append(scan)
-            if len(matches) >= search_in.limit:
-                break
+        embedding = embed_text(search_in.query)
+        matches = self.vector_store.search_similar_scams(
+            embedding=embedding,
+            limit=search_in.limit,
+        )
         return ScamSearchResponse(
             matches=[
                 ScamSearchResult(
-                    id=match.id,
-                    session_id=match.session_id,
-                    summary=match.summary,
-                    scam_type=match.scam_type,
-                    risk_level=match.risk_level,
+                    id=uuid.UUID(str(match["id"])),
+                    session_id=match["session_id"],
+                    summary=match["summary"],
+                    scam_type=match["scam_type"],
+                    risk_level=(
+                        ScanRiskLevel(str(match["risk_level"]))
+                        if match["risk_level"] is not None
+                        else None
+                    ),
+                    similarity_score=match["similarity_score"],
                 )
                 for match in matches
             ]
@@ -132,97 +140,128 @@ class ScanService:
             message="Trusted contacts notified",
         )
 
-    @staticmethod
-    async def analyze_scan(scan_id: uuid.UUID) -> None:
+    async def analyze_scan(
+        self, scan_id: uuid.UUID, image_bytes: bytes, content_type: str | None
+    ) -> None:
         with Session(engine) as session:
             scan = session.get(Scan, scan_id)
             if not scan:
                 return
 
-            scan.status = ScanStatus.IN_PROGRESS
-            session.add(scan)
-            session.commit()
-            await manager.send_scan_event(
-                scan_id=str(scan_id),
-                event_type="scan_started",
-                payload={"status": ScanStatus.IN_PROGRESS.value},
-            )
+            try:
+                if not image_bytes:
+                    raise ValueError("Uploaded image was empty")
+                if len(image_bytes) > settings.MAX_IMAGE_UPLOAD_BYTES:
+                    raise ValueError("Uploaded image exceeded the maximum allowed size")
 
-            summary, is_scam, risk_level, scam_type, evidence, actions = _analyze_content(
-                source_text=scan.source_text,
-                image_url=scan.image_url,
-            )
+                scan.status = ScanStatus.IN_PROGRESS
+                session.add(scan)
+                session.commit()
+                await manager.send_scan_event(
+                    scan_id=str(scan_id),
+                    event_type="scan_started",
+                    payload={"status": ScanStatus.IN_PROGRESS.value},
+                )
 
-            refreshed_scan = session.get(Scan, scan_id)
-            if not refreshed_scan:
-                return
-            refreshed_scan.status = ScanStatus.COMPLETE
-            refreshed_scan.summary = summary
-            refreshed_scan.is_scam = is_scam
-            refreshed_scan.risk_level = risk_level
-            refreshed_scan.scam_type = scam_type
-            refreshed_scan.evidence = evidence
-            refreshed_scan.recommended_actions = actions
-            session.add(refreshed_scan)
-            session.commit()
+                analysis = analyze_image_bytes(
+                    image_bytes=image_bytes,
+                    content_type=content_type,
+                    source_text=scan.source_text,
+                )
+                similar_scams = _search_similar_scams(self.vector_store, analysis)
+                is_scam, risk_level = _finalize_verdict(analysis, similar_scams)
 
-            await manager.send_scan_event(
-                scan_id=str(scan_id),
-                event_type="scan_completed",
-                payload={
-                    "status": ScanStatus.COMPLETE.value,
-                    "summary": summary,
-                    "is_scam": is_scam,
-                    "risk_level": risk_level.value,
-                    "scam_type": scam_type,
-                    "evidence": evidence,
-                    "recommended_actions": actions,
-                    "completed_at": datetime.now(timezone.utc).isoformat(),
-                },
-            )
+                refreshed_scan = session.get(Scan, scan_id)
+                if not refreshed_scan:
+                    return
+                refreshed_scan.status = ScanStatus.COMPLETE
+                refreshed_scan.summary = analysis.summary
+                refreshed_scan.is_scam = is_scam
+                refreshed_scan.risk_level = risk_level
+                refreshed_scan.scam_type = analysis.scam_type
+                refreshed_scan.impersonated_brand = analysis.impersonated_brand
+                refreshed_scan.confidence_score = analysis.confidence_score
+                refreshed_scan.detected_text = analysis.detected_text
+                refreshed_scan.detected_urls = analysis.detected_urls
+                refreshed_scan.evidence = analysis.evidence
+                refreshed_scan.extracted_details = analysis.extracted_details
+                refreshed_scan.similar_scams = similar_scams
+                refreshed_scan.recommended_actions = analysis.recommended_actions
+                session.add(refreshed_scan)
+                session.commit()
+
+                if is_scam:
+                    self.vector_store.index_confirmed_scam(
+                        scan_id=refreshed_scan.id,
+                        session_id=refreshed_scan.session_id,
+                        summary=analysis.summary,
+                        detected_text=analysis.detected_text,
+                        detected_urls=analysis.detected_urls,
+                        scam_type=analysis.scam_type,
+                        risk_level=risk_level,
+                    )
+
+                await manager.send_scan_event(
+                    scan_id=str(scan_id),
+                    event_type="scan_completed",
+                    payload={
+                        "status": ScanStatus.COMPLETE.value,
+                        "summary": analysis.summary,
+                        "is_scam": is_scam,
+                        "risk_level": risk_level.value,
+                        "scam_type": analysis.scam_type,
+                        "impersonated_brand": analysis.impersonated_brand,
+                        "confidence_score": analysis.confidence_score,
+                        "detected_text": analysis.detected_text,
+                        "detected_urls": analysis.detected_urls,
+                        "evidence": analysis.evidence,
+                        "similar_scams": similar_scams,
+                        "recommended_actions": analysis.recommended_actions,
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+            except Exception as exc:
+                failed_scan = session.get(Scan, scan_id)
+                if failed_scan:
+                    failed_scan.status = ScanStatus.FAILED
+                    failed_scan.summary = str(exc)
+                    session.add(failed_scan)
+                    session.commit()
+                await manager.send_scan_event(
+                    scan_id=str(scan_id),
+                    event_type="scan_failed",
+                    payload={
+                        "status": ScanStatus.FAILED.value,
+                        "error": str(exc),
+                    },
+                )
 
 
-def _analyze_content(
-    source_text: str | None, image_url: str | None
-) -> tuple[str, bool, ScanRiskLevel, str, list[str], list[str]]:
-    content = f"{source_text or ''} {image_url or ''}".lower()
-    suspicious_keywords = [
-        "urgent",
-        "gift card",
-        "wire transfer",
-        "verify account",
-        "password",
-        "social security",
-        "click here",
-    ]
-    evidence = [
-        f"Matched suspicious phrase: {keyword}"
-        for keyword in suspicious_keywords
-        if keyword in content
-    ]
-
-    if evidence:
-        return (
-            "This looks like a likely scam or phishing attempt based on urgent language and credential or payment requests.",
-            True,
-            ScanRiskLevel.HIGH,
-            "phishing",
-            evidence,
+def _search_similar_scams(
+    vector_store: RedisScamVectorStore, analysis: VisionAnalysisResult
+) -> list[dict[str, str | float | None]]:
+    if not analysis.is_potential_scam:
+        return []
+    embedding = embed_text(
+        "\n".join(
             [
-                "Do not click links or call the number shown in the message.",
-                "Do not share passwords, codes, or payment details.",
-                "Contact a trusted relative or institution using a known phone number.",
-            ],
+                analysis.summary,
+                analysis.detected_text,
+                " ".join(analysis.detected_urls),
+                analysis.scam_type,
+            ]
         )
-
-    return (
-        "No strong scam indicators were detected yet, but the user should still verify the sender and avoid sharing personal information.",
-        False,
-        ScanRiskLevel.LOW,
-        "unknown",
-        ["No high-risk keywords matched in the current scan."],
-        [
-            "Verify the sender or website independently.",
-            "Avoid sharing personal or financial details until confirmed safe.",
-        ],
     )
+    return vector_store.search_similar_scams(embedding=embedding)
+
+
+def _finalize_verdict(
+    analysis: VisionAnalysisResult, similar_scams: list[dict[str, str | float | None]]
+) -> tuple[bool, ScanRiskLevel]:
+    if analysis.confidence_score >= 0.8:
+        return True, ScanRiskLevel.HIGH
+    if analysis.confidence_score >= 0.55 and similar_scams:
+        return True, ScanRiskLevel.HIGH
+    if analysis.is_potential_scam:
+        return False, ScanRiskLevel.MEDIUM
+    return False, ScanRiskLevel.LOW

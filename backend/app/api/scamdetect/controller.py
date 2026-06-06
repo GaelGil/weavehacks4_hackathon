@@ -1,6 +1,6 @@
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Request
+from fastapi import APIRouter, BackgroundTasks, File, Form, Query, Request, UploadFile
 
 from app.api.deps import ScanServiceDep
 from app.database.schemas.Scan import (
@@ -10,7 +10,6 @@ from app.database.schemas.Scan import (
     NotifyTrustedContactsResponse,
     ScamSearchRequest,
     ScamSearchResponse,
-    ScanCreate,
     ScanList,
     ScanRead,
     TrustedContactsRequest,
@@ -26,18 +25,28 @@ router = APIRouter(prefix="/scans", tags=["scans"])
 async def create_scan(
     request: Request,
     scan_service: ScanServiceDep,
-    scan_in: ScanCreate,
     background_tasks: BackgroundTasks,
+    session_id: str = Form(...),
+    image: UploadFile = File(...),
+    source_text: str | None = Form(default=None),
 ) -> ScanRead:
     del request
-    scan = scan_service.create_scan(scan_in)
-    background_tasks.add_task(scan_service.analyze_scan, scan.id)
+    image_bytes = await image.read()
+    scan = scan_service.create_scan(session_id=session_id, source_text=source_text)
+    background_tasks.add_task(
+        scan_service.analyze_scan,
+        scan.id,
+        image_bytes,
+        image.content_type,
+    )
     return scan
 
 
 @router.get("/", response_model=ScanList)
-def list_scans(scan_service: ScanServiceDep) -> ScanList:
-    return scan_service.list_scans()
+def list_scans(
+    scan_service: ScanServiceDep, session_id: str | None = Query(default=None)
+) -> ScanList:
+    return scan_service.list_scans(session_id=session_id)
 
 
 @router.get("/{scan_id}", response_model=ScanRead)
