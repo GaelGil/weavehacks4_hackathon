@@ -1,3 +1,4 @@
+import base64
 import uuid
 from datetime import datetime, timezone
 
@@ -5,6 +6,7 @@ from fastapi import HTTPException
 from sqlalchemy import desc
 from sqlmodel import Session, select
 
+from app.agents import pipeline
 from app.api.scamdetect.contact_store import get_contacts, save_contacts
 from app.api.scamdetect.openai_service import analyze_image_bytes, embed_text
 from app.api.scamdetect.redis_vector_store import RedisScamVectorStore
@@ -12,6 +14,8 @@ from app.api.websocket.ConnectionManager import manager
 from app.core.config import settings
 from app.database.db import engine
 from app.database.models import Scan
+from app.models import ScanRequest as AgentScanRequest
+from app.models import ScanResult as AgentScanResult
 from app.database.schemas.Scan import (
     ChatResponse,
     NotifyTrustedContactsResponse,
@@ -143,6 +147,98 @@ class ScanService:
     async def analyze_scan(
         self, scan_id: uuid.UUID, image_bytes: bytes, content_type: str | None
     ) -> None:
+        """Dispatch to the configured detection engine (see settings.DETECTION_ENGINE)."""
+        if settings.DETECTION_ENGINE == "agents":
+            await self._analyze_scan_agents(scan_id, image_bytes, content_type)
+        else:
+            await self._analyze_scan_oneshot(scan_id, image_bytes, content_type)
+
+    async def _analyze_scan_agents(
+        self, scan_id: uuid.UUID, image_bytes: bytes, content_type: str | None
+    ) -> None:
+        """Run Brendan's multi-agent pipeline (collect -> research -> decide) and persist."""
+        del content_type  # the pipeline takes base64; mime not needed
+        with Session(engine) as session:
+            scan = session.get(Scan, scan_id)
+            if not scan:
+                return
+            try:
+                if not image_bytes:
+                    raise ValueError("Uploaded image was empty")
+                if len(image_bytes) > settings.MAX_IMAGE_UPLOAD_BYTES:
+                    raise ValueError("Uploaded image exceeded the maximum allowed size")
+
+                scan.status = ScanStatus.IN_PROGRESS
+                session.add(scan)
+                session.commit()
+                await manager.send_scan_event(
+                    scan_id=str(scan_id),
+                    event_type="scan_started",
+                    payload={"status": ScanStatus.IN_PROGRESS.value},
+                )
+
+                image_b64 = base64.b64encode(image_bytes).decode("utf-8")
+                result = await pipeline.run_scan(
+                    AgentScanRequest(image_b64=image_b64, context_text=scan.source_text or "")
+                )
+                fields = _result_to_scan_fields(result)
+
+                refreshed_scan = session.get(Scan, scan_id)
+                if not refreshed_scan:
+                    return
+                for key, value in fields.items():
+                    setattr(refreshed_scan, key, value)
+                session.add(refreshed_scan)
+                session.commit()
+
+                if refreshed_scan.is_scam:
+                    self.vector_store.index_confirmed_scam(
+                        scan_id=refreshed_scan.id,
+                        session_id=refreshed_scan.session_id,
+                        summary=refreshed_scan.summary or "",
+                        detected_text=refreshed_scan.detected_text or "",
+                        detected_urls=refreshed_scan.detected_urls,
+                        scam_type=refreshed_scan.scam_type or "unknown",
+                        risk_level=refreshed_scan.risk_level,
+                    )
+
+                await manager.send_scan_event(
+                    scan_id=str(scan_id),
+                    event_type="scan_completed",
+                    payload={
+                        "status": ScanStatus.COMPLETE.value,
+                        "summary": refreshed_scan.summary,
+                        "is_scam": refreshed_scan.is_scam,
+                        "risk_level": refreshed_scan.risk_level.value
+                        if refreshed_scan.risk_level
+                        else None,
+                        "scam_type": refreshed_scan.scam_type,
+                        "impersonated_brand": refreshed_scan.impersonated_brand,
+                        "confidence_score": refreshed_scan.confidence_score,
+                        "detected_text": refreshed_scan.detected_text,
+                        "detected_urls": refreshed_scan.detected_urls,
+                        "evidence": refreshed_scan.evidence,
+                        "similar_scams": refreshed_scan.similar_scams,
+                        "recommended_actions": refreshed_scan.recommended_actions,
+                        "completed_at": datetime.now(timezone.utc).isoformat(),
+                    },
+                )
+            except Exception as exc:
+                failed_scan = session.get(Scan, scan_id)
+                if failed_scan:
+                    failed_scan.status = ScanStatus.FAILED
+                    failed_scan.summary = str(exc)
+                    session.add(failed_scan)
+                    session.commit()
+                await manager.send_scan_event(
+                    scan_id=str(scan_id),
+                    event_type="scan_failed",
+                    payload={"status": ScanStatus.FAILED.value, "error": str(exc)},
+                )
+
+    async def _analyze_scan_oneshot(
+        self, scan_id: uuid.UUID, image_bytes: bytes, content_type: str | None
+    ) -> None:
         with Session(engine) as session:
             scan = session.get(Scan, scan_id)
             if not scan:
@@ -235,6 +331,40 @@ class ScanService:
                         "error": str(exc),
                     },
                 )
+
+
+_RISK_BY_VERDICT = {
+    "scam": ScanRiskLevel.HIGH,
+    "suspicious": ScanRiskLevel.MEDIUM,
+    "safe": ScanRiskLevel.LOW,
+}
+
+
+def _result_to_scan_fields(result: AgentScanResult) -> dict:
+    """Map the agent pipeline's ScanResult onto the Scan DB columns."""
+    facts = result.facts
+    research = result.research
+    return {
+        "status": ScanStatus.COMPLETE,
+        "summary": result.advice,
+        "is_scam": result.verdict == "scam",
+        "risk_level": _RISK_BY_VERDICT.get(result.verdict, ScanRiskLevel.LOW),
+        "confidence_score": result.risk_score,
+        "scam_type": (result.similar_scams[0].category if result.similar_scams else "unknown"),
+        "impersonated_brand": (facts.brand_claimed or None) if facts else None,
+        "detected_text": (facts.raw_text if facts else ""),
+        "detected_urls": (facts.links if facts else []),
+        "evidence": [*result.reasons, *(research.scam_indicators if research else [])],
+        "extracted_details": {
+            "facts": facts.model_dump() if facts else {},
+            "research": research.model_dump() if research else {},
+            "trusted_sender": result.trusted_sender,
+        },
+        "similar_scams": [s.model_dump() for s in result.similar_scams],
+        "recommended_actions": [
+            f"{a.label}: {a.detail}" for a in result.suggested_actions
+        ],
+    }
 
 
 def _search_similar_scams(

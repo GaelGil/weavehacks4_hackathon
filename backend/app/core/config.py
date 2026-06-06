@@ -53,6 +53,10 @@ class Settings(BaseSettings):
     OPENAI_CHAT_MODEL: str = "gpt-4.1-mini"
     OPENAI_VISION_MODEL: str = "gpt-4.1-mini"
     OPENAI_EMBEDDING_MODEL: str = "text-embedding-3-small"
+    # Which scan engine ScanService.analyze_scan uses:
+    #   "agents"  -> Brendan's multi-agent pipeline (collect -> research -> decide)
+    #   "oneshot" -> the original single-call vision classifier
+    DETECTION_ENGINE: Literal["agents", "oneshot"] = "agents"
     REDIS_URL: str | None = None
     REDIS_INDEX_NAME: str = "scam_vectors"
     REDIS_VECTOR_DISTANCE_THRESHOLD: float = 0.35
