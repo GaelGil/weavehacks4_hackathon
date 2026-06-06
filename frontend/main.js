@@ -1,6 +1,9 @@
-const { app, BrowserWindow, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const path = require('path');
+
+const isDev = process.argv.includes('--dev');
+const VITE_DEV_URL = 'http://localhost:5173';
 
 let mainWindow;
 
@@ -15,12 +18,31 @@ function createWindow() {
     },
   });
 
-  mainWindow.loadFile(path.join(__dirname, 'renderer', 'index.html'));
-
-  if (process.argv.includes('--dev')) {
+  if (isDev) {
+    // React renderer served by Vite (npm run dev:vite).
+    mainWindow.loadURL(VITE_DEV_URL);
     mainWindow.webContents.openDevTools();
+  } else {
+    // Production: load the built renderer bundle.
+    mainWindow.loadFile(path.join(__dirname, 'renderer', 'dist', 'index.html'));
   }
 }
+
+// Capture the primary display and return a base64 PNG (no data: prefix).
+// Used by the "Check my screen" button. The renderer never gets raw OS access.
+ipcMain.handle('capture-screen', async () => {
+  const { size, scaleFactor } = screen.getPrimaryDisplay();
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: {
+      width: Math.round(size.width * scaleFactor),
+      height: Math.round(size.height * scaleFactor),
+    },
+  });
+  const primary = sources[0];
+  if (!primary) throw new Error('No screen source available');
+  return primary.thumbnail.toPNG().toString('base64');
+});
 
 function setupAutoUpdater() {
   autoUpdater.autoDownload = false;

@@ -1,96 +1,16 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>WeaveHacks4</title>
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #1a1a2e;
-      color: #e0e0e0;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-    }
-    header {
-      background: #16213e;
-      padding: 16px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      border-bottom: 1px solid #0f3460;
-    }
-    h1 { font-size: 1.4rem; color: #e94560; }
-    #version { font-size: 0.85rem; color: #888; }
-    main {
-      flex: 1;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      flex-direction: column;
-      gap: 24px;
-      padding: 32px;
-    }
-    #update-panel {
-      background: #16213e;
-      border: 1px solid #0f3460;
-      border-radius: 8px;
-      padding: 24px;
-      width: 100%;
-      max-width: 480px;
-    }
-    #update-panel h2 { font-size: 1rem; margin-bottom: 16px; color: #e94560; }
-    #update-status { font-size: 0.9rem; margin-bottom: 16px; min-height: 40px; color: #ccc; }
-    #progress-bar-container {
-      display: none;
-      background: #0f3460;
-      border-radius: 4px;
-      height: 8px;
-      margin-bottom: 16px;
-      overflow: hidden;
-    }
-    #progress-bar {
-      height: 100%;
-      background: #e94560;
-      width: 0%;
-      transition: width 0.2s;
-    }
-    .btn-row { display: flex; gap: 12px; flex-wrap: wrap; }
-    button {
-      padding: 8px 18px;
-      border: none;
-      border-radius: 6px;
-      cursor: pointer;
-      font-size: 0.9rem;
-      font-weight: 500;
-      transition: opacity 0.2s;
-    }
-    button:disabled { opacity: 0.4; cursor: not-allowed; }
-    #btn-check { background: #0f3460; color: #fff; }
-    #btn-download { background: #e94560; color: #fff; display: none; }
-    #btn-install { background: #2ecc71; color: #fff; display: none; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>WeaveHacks4</h1>
-    <span id="version">v--</span>
-  </header>
-  <main>
-    <div id="update-panel">
-      <h2>Application Updates</h2>
-      <div id="update-status">Click "Check for Updates" to look for a new version.</div>
-      <div id="progress-bar-container"><div id="progress-bar"></div></div>
-      <div class="btn-row">
-        <button id="btn-check">Check for Updates</button>
-        <button id="btn-download">Download Update</button>
-        <button id="btn-install">Restart & Install</button>
-      </div>
-    </div>
-  </main>
-  <script src="renderer.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' http://localhost:8000 http://localhost:4000 ws://localhost:5173"
+    />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ScamGuard</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

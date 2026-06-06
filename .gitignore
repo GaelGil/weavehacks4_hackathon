@@ -1,2 +1,23 @@
-/frontend/node_modules
-frontend/.env
+# Node / Electron
+frontend/node_modules
+frontend/renderer/dist
+frontend/release
+frontend/dist
+
+# Python
+backend/.venv
+backend/venv
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Env / secrets
+.env
+**/.env
+*.local
+
+# OS
+.DS_Store
+
+# Logs
+*.log
