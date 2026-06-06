@@ -10,20 +10,7 @@ __pycache__/
 *.json
 
 
-# frontend
-/node_modules
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
 
 .vscode/*
 !.vscode/extensions.json
@@ -47,3 +34,4 @@ dist-ssr
 .env.production.local
 npm-debug.log*
 notes.txt
+frontend/.env
