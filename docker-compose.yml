@@ -1,0 +1,27 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    environment:
+      - ENVIRONMENT=local
+      # Python debugging
+      - PYTHONUNBUFFERED=1
+      - PYTHONDONTWRITEBYTECODE=1
+      # FastAPI debugging
+      - DEBUG=1
+    # Ensure all logs are captured
+    volumes:
+      - ./backend/app:/app/app
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "200k"
+        max-file: "10"
+    # Keep container running for debugging
+    tty: true
+    stdin_open: true
