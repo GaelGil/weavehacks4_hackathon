@@ -1,39 +1,56 @@
 {
   "name": "weavehacks4-app",
   "version": "1.0.0",
-  "description": "WeaveHacks4 Hackathon Desktop App",
+  "description": "ScamGuard — WeaveHacks4 Hackathon Desktop App",
   "main": "main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron . --dev",
-    "build": "electron-builder",
-    "build:win": "electron-builder --win",
-    "build:mac": "electron-builder --mac",
-    "build:linux": "electron-builder --linux",
-    "publish": "electron-builder --publish always"
+    "dev:vite": "vite",
+    "dev:electron": "wait-on tcp:5173 && electron . --dev",
+    "dev": "concurrently -k -n vite,electron -c blue,green \"npm:dev:vite\" \"npm:dev:electron\"",
+    "copilot:runtime": "node copilotkit-runtime.mjs",
+    "build:renderer": "vite build",
+    "build": "npm run build:renderer && electron-builder",
+    "build:win": "npm run build:renderer && electron-builder --win",
+    "build:mac": "npm run build:renderer && electron-builder --mac",
+    "build:linux": "npm run build:renderer && electron-builder --linux",
+    "publish": "npm run build:renderer && electron-builder --publish always",
+    "start": "electron ."
   },
   "keywords": [],
   "author": "",
   "license": "MIT",
   "devDependencies": {
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "@vitejs/plugin-react": "^4.2.0",
+    "concurrently": "^8.2.2",
     "electron": "^28.0.0",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "typescript": "^5.4.0",
+    "vite": "^5.2.0",
+    "wait-on": "^7.2.0"
   },
   "dependencies": {
-    "electron-updater": "^6.1.7",
     "@anthropic-ai/sdk": "^0.39.0",
+    "@copilotkit/react-core": "^1.3.0",
+    "@copilotkit/react-ui": "^1.3.0",
+    "@copilotkit/runtime": "^1.3.0",
+    "electron-updater": "^6.1.7",
+    "express": "^4.19.2",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
     "weave": "^0.6.0"
   },
   "build": {
     "appId": "com.weavehacks4.app",
     "productName": "WeaveHacks4",
     "directories": {
-      "output": "dist"
+      "output": "release"
     },
     "files": [
       "main.js",
       "preload.js",
-      "renderer/**/*",
+      "renderer/dist/**/*",
       "modules/**/*",
       "resources/**/*",
       "package.json"
@@ -60,7 +77,7 @@
         }
       ],
       "icon": "assets/icon.icns",
-      "category": "public.app-category.developer-tools"
+      "category": "public.app-category.utilities"
     },
     "linux": {
       "target": [

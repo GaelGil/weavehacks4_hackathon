@@ -1,0 +1,20 @@
+# --- Web ---
+fastapi>=0.110
+uvicorn[standard]>=0.29
+pydantic>=2.6
+pydantic-settings>=2.2
+python-multipart>=0.0.9
+
+# --- Agents / LLM ---
+openai>=1.30
+openai-agents>=0.0.10        # OpenAI Agents SDK (import name: `agents`)
+
+# --- Observability ---
+weave>=0.51
+
+# --- Redis vector search ---
+redis>=5.0
+numpy>=1.26
+
+# --- CopilotKit (Python remote endpoint) ---
+copilotkit>=0.1.30

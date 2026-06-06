@@ -1,38 +1,23 @@
-# backend
-backend/env/
+# Node / Electron
+frontend/node_modules
+frontend/renderer/dist
+frontend/release
+frontend/dist
 
-backend/.env
+# Python
+backend/.venv
+backend/venv
 __pycache__/
-.flaskenv
-.python-version
-.venv
+*.py[cod]
+*.egg-info/
 
-*.json
-
-
-
-
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+# Env / secrets
 .env
+**/.env
+*.local
 
-
-/build
-
-# misc
+# OS
 .DS_Store
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-npm-debug.log*
-notes.txt
-frontend/.env
-/frontend/node_modules
+
+# Logs
+*.log

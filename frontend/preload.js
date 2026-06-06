@@ -4,6 +4,8 @@ const { contextBridge, ipcRenderer } = require('electron');
 // electronAPI — existing update surface (unchanged)
 // ---------------------------------------------------------------------------
 contextBridge.exposeInMainWorld('electronAPI', {
+  // ScamGuard: capture the screen for a scan (returns base64 PNG, no data: prefix).
+  captureScreen: () => ipcRenderer.invoke('capture-screen'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
   installUpdate: () => ipcRenderer.invoke('install-update'),
