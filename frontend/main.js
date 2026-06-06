@@ -30,18 +30,32 @@ function createWindow() {
 
 // Capture the primary display and return a base64 PNG (no data: prefix).
 // Used by the "Check my screen" button. The renderer never gets raw OS access.
+//
+// We hide ScamGuard's own window first so the screenshot captures what the user is
+// actually looking at (the email/webpage behind us), not ScamGuard itself.
 ipcMain.handle('capture-screen', async () => {
-  const { size, scaleFactor } = screen.getPrimaryDisplay();
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: {
-      width: Math.round(size.width * scaleFactor),
-      height: Math.round(size.height * scaleFactor),
-    },
-  });
-  const primary = sources[0];
-  if (!primary) throw new Error('No screen source available');
-  return primary.thumbnail.toPNG().toString('base64');
+  const wasVisible = mainWindow?.isVisible();
+  if (wasVisible) {
+    mainWindow.hide();
+    // Give the compositor a moment to actually remove the window before capturing.
+    await new Promise((r) => setTimeout(r, 250));
+  }
+
+  try {
+    const { size, scaleFactor } = screen.getPrimaryDisplay();
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: {
+        width: Math.round(size.width * scaleFactor),
+        height: Math.round(size.height * scaleFactor),
+      },
+    });
+    const primary = sources[0];
+    if (!primary) throw new Error('No screen source available');
+    return primary.thumbnail.toPNG().toString('base64');
+  } finally {
+    if (wasVisible) mainWindow.show();
+  }
 });
 
 function setupAutoUpdater() {

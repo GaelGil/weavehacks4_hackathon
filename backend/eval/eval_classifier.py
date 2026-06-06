@@ -17,7 +17,7 @@ from pathlib import Path
 
 import weave
 
-from app.agents.classifier import classify
+from app.agents.pipeline import assess_text
 from app.config import get_settings
 
 DATA = Path(__file__).parent / "dataset.jsonl"
@@ -34,8 +34,8 @@ def load_examples() -> list[dict]:
 
 @weave.op()
 async def model(context_text: str) -> dict:
-    verdict = await classify(image_b64=None, context_text=context_text)
-    return {"verdict": verdict.verdict, "risk_score": verdict.risk_score}
+    result = await assess_text(context_text)
+    return {"verdict": result.verdict, "risk_score": result.risk_score}
 
 
 @weave.op()

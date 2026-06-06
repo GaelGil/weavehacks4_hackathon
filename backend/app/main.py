@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from .agents import advisor, pipeline
 from .config import get_settings
 from .copilot import mount_copilotkit
-from .models import AdvisorRequest, ScanRequest, ScanResult
+from .models import AdvisorRequest, ContactRequest, ScanRequest, ScanResult
 from .services.redis_store import get_store
 
 
@@ -66,6 +66,19 @@ async def health() -> dict:
 async def scan(req: ScanRequest) -> ScanResult:
     """Run the full redact -> classify -> vector-search -> advise pipeline."""
     return await pipeline.run_scan(req)
+
+
+@app.post("/contacts")
+async def set_contact(req: ContactRequest) -> dict:
+    """Mark a sender (email address or domain) as trusted/untrusted."""
+    get_store().set_contact(req.identifier.strip().lower(), req.trusted)
+    return {"ok": True, "identifier": req.identifier.strip().lower(), "trusted": req.trusted}
+
+
+@app.get("/contacts/{identifier}")
+async def get_contact(identifier: str) -> dict:
+    trusted = get_store().get_contact(identifier.strip().lower())
+    return {"identifier": identifier.strip().lower(), "trusted": trusted}
 
 
 @app.post("/advisor")

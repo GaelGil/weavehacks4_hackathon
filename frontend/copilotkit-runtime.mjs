@@ -9,12 +9,23 @@
 //   npm run copilot:runtime
 //
 // Requires OPENAI_API_KEY in the environment.
+import dotenv from "dotenv";
 import express from "express";
 import {
   CopilotRuntime,
   OpenAIAdapter,
   copilotRuntimeNodeHttpEndpoint,
 } from "@copilotkit/runtime";
+
+// Reuse the backend's .env so the key lives in one place.
+dotenv.config({ path: new URL("../backend/.env", import.meta.url) });
+
+if (!process.env.OPENAI_API_KEY) {
+  console.error(
+    "OPENAI_API_KEY not found. Put it in backend/.env, or `export OPENAI_API_KEY=sk-...` before running."
+  );
+  process.exit(1);
+}
 
 const PORT = 4000;
 const FASTAPI_REMOTE = "http://localhost:8000/copilotkit";

@@ -16,16 +16,26 @@ import numpy as np
 import redis
 from openai import OpenAI
 from redis.commands.search.field import TagField, TextField, VectorField
-from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 from redis.commands.search.query import Query
 
-from ..config import get_settings
-from ..models import SimilarScam
+try:
+    # redis-py >= 5.1 (snake_case module)
+    from redis.commands.search.index_definition import IndexDefinition, IndexType
+except ImportError:  # pragma: no cover - older redis-py
+    from redis.commands.search.indexDefinition import IndexDefinition, IndexType
 
-SCAM_INDEX = "scam_idx"
-SCAM_PREFIX = "scam:"
+from ..config import get_settings
+from ..models import SimilarExample
+
+# A single corpus holding BOTH known scams and known-legit messages, tagged by `label`,
+# so the ResearchAgent can pull two-sided comparison evidence.
+EXAMPLE_INDEX = "example_idx"
+EXAMPLE_PREFIX = "example:"
 CONTACT_PREFIX = "contact:"
-CACHE_PREFIX = "verdict:"
+# Bump CACHE_VERSION whenever the pipeline/output shape changes so old cached
+# verdicts are never served after a redesign.
+CACHE_VERSION = "v3"
+CACHE_PREFIX = f"verdict:{CACHE_VERSION}:"
 EMBED_DIM = 1536  # text-embedding-3-small
 
 
@@ -58,12 +68,13 @@ class RedisStore:
         if not self.r:
             return
         try:
-            self.r.ft(SCAM_INDEX).info()
+            self.r.ft(EXAMPLE_INDEX).info()
             return  # already exists
         except Exception:  # noqa: BLE001
             pass
         schema = (
             TextField("text"),
+            TagField("label"),       # "scam" | "legit"
             TagField("category"),
             VectorField(
                 "embedding",
@@ -71,49 +82,58 @@ class RedisStore:
                 {"TYPE": "FLOAT32", "DIM": EMBED_DIM, "DISTANCE_METRIC": "COSINE"},
             ),
         )
-        self.r.ft(SCAM_INDEX).create_index(
+        self.r.ft(EXAMPLE_INDEX).create_index(
             schema,
-            definition=IndexDefinition(prefix=[SCAM_PREFIX], index_type=IndexType.HASH),
+            definition=IndexDefinition(prefix=[EXAMPLE_PREFIX], index_type=IndexType.HASH),
         )
-        print("[redis_store] created scam vector index")
+        print("[redis_store] created example vector index")
 
-    # ---------- scam corpus ----------
-    def add_scam(self, text: str, category: str = "generic") -> bool:
+    # ---------- example corpus (scams + legit) ----------
+    def add_example(self, text: str, label: str = "scam", category: str = "generic") -> bool:
         if not self.r:
             return False
         vec = self.embed(text)
         if vec is None:
             return False
-        key = SCAM_PREFIX + hashlib.sha1(text.encode()).hexdigest()[:16]
-        self.r.hset(key, mapping={"text": text, "category": category, "embedding": self._to_bytes(vec)})
+        key = EXAMPLE_PREFIX + hashlib.sha1(f"{label}:{text}".encode()).hexdigest()[:16]
+        self.r.hset(
+            key,
+            mapping={"text": text, "label": label, "category": category, "embedding": self._to_bytes(vec)},
+        )
         return True
 
-    def search_similar(self, text: str, k: int = 3) -> list[SimilarScam]:
+    def search_examples(self, text: str, k: int = 3, label: Optional[str] = None) -> list[SimilarExample]:
+        """KNN over the corpus. Pass label='scam' or 'legit' to restrict the comparison set."""
         if not self.r:
             return []
         vec = self.embed(text)
         if vec is None:
             return []
+        prefilter = f"@label:{{{label}}}" if label else "*"
         q = (
-            Query(f"*=>[KNN {k} @embedding $vec AS score]")
+            Query(f"{prefilter}=>[KNN {k} @embedding $vec AS score]")
             .sort_by("score")
-            .return_fields("text", "category", "score")
+            .return_fields("text", "label", "category", "score")
             .dialect(2)
         )
         try:
-            res = self.r.ft(SCAM_INDEX).search(q, query_params={"vec": self._to_bytes(vec)})
+            res = self.r.ft(EXAMPLE_INDEX).search(q, query_params={"vec": self._to_bytes(vec)})
         except Exception as e:  # noqa: BLE001
             print(f"[redis_store] search failed: {e}")
             return []
-        out: list[SimilarScam] = []
+
+        def dec(v):
+            return v.decode() if isinstance(v, bytes) else v
+
+        out: list[SimilarExample] = []
         for doc in res.docs:
-            # COSINE distance -> similarity
-            distance = float(doc.score)
+            distance = float(doc.score)  # COSINE distance -> similarity
             out.append(
-                SimilarScam(
-                    text=doc.text.decode() if isinstance(doc.text, bytes) else doc.text,
+                SimilarExample(
+                    text=dec(doc.text),
                     score=round(1.0 - distance, 3),
-                    category=(doc.category.decode() if isinstance(doc.category, bytes) else doc.category),
+                    label=dec(getattr(doc, "label", "scam")) or "scam",
+                    category=dec(getattr(doc, "category", "")),
                 )
             )
         return out
