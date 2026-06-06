@@ -2,7 +2,8 @@ import uuid
 from enum import Enum
 from typing import Any
 
-from pydantic import EmailStr, Field as PydanticField
+from pydantic import EmailStr
+from pydantic import Field as PydanticField
 from sqlalchemy import JSON, Column, Text
 from sqlmodel import Field, SQLModel
 
@@ -37,11 +38,21 @@ class ScanBase(SQLModel):
     impersonated_brand: str | None = Field(default=None, max_length=255)
     confidence_score: float | None = Field(default=None, ge=0, le=1)
     summary: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    detected_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
-    detected_urls: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-    evidence: list[str] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
-    extracted_details: dict[str, Any] = Field(default_factory=dict, sa_column=Column(JSON, nullable=False))
-    similar_scams: list[dict[str, Any]] = Field(default_factory=list, sa_column=Column(JSON, nullable=False))
+    detected_text: str | None = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    detected_urls: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )
+    evidence: list[str] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )
+    extracted_details: dict[str, Any] = Field(
+        default_factory=dict, sa_column=Column(JSON, nullable=False)
+    )
+    similar_scams: list[dict[str, Any]] = Field(
+        default_factory=list, sa_column=Column(JSON, nullable=False)
+    )
     recommended_actions: list[str] = Field(
         default_factory=list, sa_column=Column(JSON, nullable=False)
     )

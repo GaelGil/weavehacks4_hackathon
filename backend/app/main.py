@@ -53,37 +53,3 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# @app.get("/health")
-# async def health() -> dict:
-#     store = get_store()
-#     return {
-#         "ok": True,
-#         "redis": store.r is not None,
-#         "scan_interval_seconds": _settings.scan_interval_seconds,
-#     }
-
-
-# @app.post("/scan", response_model=ScanResult)
-# async def scan(req: ScanRequest) -> ScanResult:
-#     """Run the full redact -> classify -> vector-search -> advise pipeline."""
-#     return await pipeline.run_scan(req)
-
-
-# @app.post("/advisor")
-# async def advisor_chat(req: AdvisorRequest) -> dict:
-#     """Plain REST chat fallback (also used if CopilotKit isn't wired up yet)."""
-#     context = ""
-#     if req.scan:
-#         context = (
-#             f"Verdict: {req.scan.verdict} (risk {req.scan.risk_score}). "
-#             f"Reasons: {'; '.join(req.scan.reasons)}. Advice given: {req.scan.advice}"
-#         )
-#     answer = await advisor.chat(req.question, context)
-#     return {"answer": answer}
-
-
-# # Optional: CopilotKit remote endpoint at /copilotkit
-# mount_copilotkit(app)
-# app.include_router(api_router, prefix=settings.API_V1_STR)
