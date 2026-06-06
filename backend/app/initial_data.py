@@ -14,9 +14,9 @@ def init() -> None:
 
 
 def main() -> None:
-    logger.info("Creating initial data")
+    logger.info("Running backend initialization")
     init()
-    logger.info("Initial data created")
+    logger.info("Backend initialization complete")
 
 
 if __name__ == "__main__":
