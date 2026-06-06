@@ -32,6 +32,7 @@ dependencies = [
     "wikipedia>=1.4.0",
     "slowapi>=0.1.9",
     "weave>=0.51.54",
+    "openai-agents>=0.17.4",
 ]
 
 [tool.uv]
