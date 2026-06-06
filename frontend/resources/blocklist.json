@@ -1,0 +1,14 @@
+{
+  "remote_access": [
+    "AnyDesk.exe", "TeamViewer.exe", "ScreenConnect.exe",
+    "LogMeIn.exe", "Supremo.exe", "RemotePC.exe",
+    "UltraVNC.exe", "RealVNC.exe", "TightVNC.exe",
+    "GoToMeeting.exe", "ShowMyPC.exe", "Ammyy.exe",
+    "AmmyyAdmin.exe", "ISL Online.exe", "Zoho Assist.exe",
+    "NetSupport.exe", "DWService.exe", "Getscreen.exe"
+  ],
+  "suspicious_tools": [
+    "ProcessHacker.exe", "autoruns.exe", "procexp.exe",
+    "procexp64.exe", "Wireshark.exe", "NetworkMiner.exe"
+  ]
+}
