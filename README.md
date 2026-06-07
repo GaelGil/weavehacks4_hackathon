@@ -113,35 +113,3 @@ npm run dev                              # Vite (:5173) + Electron together
 ```bash
 cd backend && uv run python -m eval.eval_classifier
 ```
-
-## Notes
-- **CopilotKit runs on OpenAI, not the backend.** The chat is served entirely by the Node
-  runtime (`frontend/copilotkit-runtime.mjs`) using the OpenAI adapter; it gets the latest
-  scan via `useCopilotReadable` and can trigger a scan via the `checkMyScreen` frontend
-  action. (The dead Python remote-endpoint path in `backend/app/copilot.py` is unused.)
-- **Redis 8 / RESP2.** `redis-py`'s `FT.SEARCH` parser returns 0 results under RESP3 on
-  Redis 8, so both vector stores create their client with `protocol=2`. Don't remove that.
-- **The "Check my screen" flow** hits `POST /api/v1/scans/scan` → the agent pipeline above.
-  There is also a DB-backed multipart upload flow (`POST /api/v1/scans/` + WebSocket) used
-  for persisted scan history.
-
-## Demo script (2 min)
-1. Open a fake phishing email on screen.
-2. Click **Check my screen** in ScamGuard.
-3. Watch the verdict, the **"Handled by … Specialist"** badge, reasons + safe actions.
-4. Open the chat: "Is this a scam? What do I do?" (plain-language, scan-aware).
-5. Show the **Weave** trace tree: `collect → research → TriageAgent → Specialist`.
-6. Show the **Weave Evaluation** scorecard.
-
-## Status / TODO
-- [x] Multi-agent pipeline: redact ∥ collect → research → **triage → specialist**
-- [x] Redis vector similarity search over a seeded scam + legit corpus (RESP2-fixed)
-- [x] Web-search grounding in the research agent
-- [x] Weave tracing + eval harness
-- [x] CopilotKit chat (OpenAI runtime, plain-language / scan-aware)
-- [x] Electron screenshot capture + scan UI + background detector pillars
-- [ ] **True pixel redaction** (OCR + blur regions) — the redactor currently *describes* what to censor
-- [ ] Wire the agent pipeline into the DB-backed `/scans/` flow (currently a one-shot classifier)
-- [ ] Executable remediation actions, e.g. "block sender" via Composio (stretch)
-- [ ] Cross-platform process scanner (the current one is Windows-only)
-```
