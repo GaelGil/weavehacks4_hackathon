@@ -42,6 +42,8 @@ let connectionScanTimer;
 const bankingAlertCooldown = new Map();
 // Suppress repeat connection alerts for the same process name.
 const connectionAlertCooldown = new Map();
+// Suppress repeat process alerts for the same process name.
+const processAlertCooldown = new Map();
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -143,7 +145,10 @@ function startScreenAnalysisLoop() {
 // Process scanner (Pillar 2)
 // ---------------------------------------------------------------------------
 
+const PROCESS_ALERT_COOLDOWN_MS = 60_000;
+
 async function runProcessScan() {
+  if (process.platform !== 'win32') return;
   if (!detectorState.processScanner.enabled) return;
   try {
     const found = await scanProcesses();
@@ -154,7 +159,16 @@ async function runProcessScan() {
     if (found.length) reportDetections(found); // persist to backend, fire-and-forget
 
     for (const proc of found) {
-      const type = proc.category === 'remote_access' ? 'REMOTE_ACCESS_TOOL' : 'SUSPICIOUS_PROCESS';
+      const key = proc.name.toLowerCase();
+      const last = processAlertCooldown.get(key) || 0;
+      if (Date.now() - last < PROCESS_ALERT_COOLDOWN_MS) continue;
+      processAlertCooldown.set(key, Date.now());
+
+      let type;
+      if (proc.category === 'remote_access') type = 'REMOTE_ACCESS_TOOL';
+      else if (proc.category === 'screen_capture') type = 'SCREEN_RECORDING_ACTIVE';
+      else type = 'SUSPICIOUS_PROCESS';
+
       dispatchAlert(type, { process: proc });
     }
   } catch (err) {

@@ -15,7 +15,8 @@ const bankingDomains = JSON.parse(
 
 let remoteAccessLower = localBlocklist.remote_access.map((p) => p.toLowerCase());
 let suspiciousToolsLower = localBlocklist.suspicious_tools.map((p) => p.toLowerCase());
-let allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower]);
+let screenCaptureLower = localBlocklist.screen_capture.map((p) => p.toLowerCase());
+let allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower, ...screenCaptureLower]);
 
 async function initialize() {
   try {
@@ -24,7 +25,8 @@ async function initialize() {
     const rules = await res.json();
     remoteAccessLower = rules.remote_access.map((p) => p.toLowerCase());
     suspiciousToolsLower = rules.suspicious_tools.map((p) => p.toLowerCase());
-    allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower]);
+    screenCaptureLower = (rules.screen_capture || []).map((p) => p.toLowerCase());
+    allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower, ...screenCaptureLower]);
     console.log('[processScanner] loaded threat rules from backend');
   } catch (_) {
     console.warn('[processScanner] backend unreachable — using local blocklist');
@@ -46,6 +48,7 @@ async function reportDetections(detections) {
 
 function getCategoryForProcess(nameLower) {
   if (remoteAccessLower.includes(nameLower)) return 'remote_access';
+  if (screenCaptureLower.includes(nameLower)) return 'screen_capture';
   return 'suspicious_tool';
 }
 

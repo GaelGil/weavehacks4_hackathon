@@ -36,6 +36,17 @@ const ALERT_CONFIG = {
     dismissable: true,
     autoDismissMs: 15000,
   },
+  SCREEN_RECORDING_ACTIVE: {
+    severity: 'warning',
+    title: 'Screen Recording Software is Running',
+    message: "A screen recording program is active. If you didn't start it, your screen may be visible to others.",
+    messageBuilder: (data) => {
+      const name = data?.process?.name || 'A screen recording program';
+      return `${name} is running. If you didn't start it, or if someone asked you to open it, your screen may be visible to others.`;
+    },
+    dismissable: true,
+    autoDismissMs: 20000,
+  },
   REMOTE_ACCESS_CONNECTED: {
     severity: 'critical',
     title: 'DANGER: Remote Access Program Is Connected',
