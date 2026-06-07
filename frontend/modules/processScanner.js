@@ -2,12 +2,43 @@ const { exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const blocklist = JSON.parse(
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
+
+// Local file is the fallback when the backend is unreachable.
+const localBlocklist = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../resources/blocklist.json'), 'utf8')
 );
-const remoteAccessLower = blocklist.remote_access.map((p) => p.toLowerCase());
-const suspiciousToolsLower = blocklist.suspicious_tools.map((p) => p.toLowerCase());
-const allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower]);
+
+let remoteAccessLower = localBlocklist.remote_access.map((p) => p.toLowerCase());
+let suspiciousToolsLower = localBlocklist.suspicious_tools.map((p) => p.toLowerCase());
+let allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower]);
+
+async function initialize() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/scans/config/threat-rules`);
+    if (!res.ok) return;
+    const rules = await res.json();
+    remoteAccessLower = rules.remote_access.map((p) => p.toLowerCase());
+    suspiciousToolsLower = rules.suspicious_tools.map((p) => p.toLowerCase());
+    allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower]);
+    console.log('[processScanner] loaded threat rules from backend');
+  } catch (_) {
+    console.warn('[processScanner] backend unreachable — using local blocklist');
+  }
+}
+
+async function reportDetections(detections) {
+  if (!detections.length) return;
+  try {
+    await fetch(`${BACKEND_URL}/api/v1/scans/detections/processes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ processes: detections }),
+    });
+  } catch (_) {
+    // Fire-and-forget — never block the local detection loop
+  }
+}
 
 function getCategoryForProcess(nameLower) {
   if (remoteAccessLower.includes(nameLower)) return 'remote_access';
@@ -78,4 +109,4 @@ async function scanProcesses() {
   }
 }
 
-module.exports = { scanProcesses };
+module.exports = { initialize, scanProcesses, reportDetections };

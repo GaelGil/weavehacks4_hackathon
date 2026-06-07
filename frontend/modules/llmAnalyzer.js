@@ -1,68 +1,28 @@
-const OpenAI = require('openai');
+// Screen analysis delegated entirely to the backend pipeline.
+// The frontend captures the screenshot; all LLM reasoning runs server-side.
 
-let weave;
-try {
-  weave = require('weave');
-} catch (_) {
-  weave = null;
-}
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
 
-const SYSTEM_PROMPT = `You are a scam detection assistant protecting elderly users.
-Analyze the screenshot and respond ONLY with a JSON object (no markdown fences):
-{
-  "suspicious": true | false,
-  "severity": "low" | "medium" | "critical",
-  "reason": "brief one-sentence explanation",
-  "detected": ["list", "of", "matched", "threat", "types"]
-}
-Threat types to detect:
-- remote_desktop_software
-- fake_tech_support_popup
-- gift_card_request
-- unusual_urgency_language
-- password_request
-- unfamiliar_remote_cursor
-- suspicious_browser_warning
-- fake_virus_alert
-- cryptocurrency_scam
-If nothing suspicious is found, return suspicious: false with an empty detected array.`;
-
-let client;
-
-function getClient() {
-  if (!client) {
-    const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) throw new Error('OPENAI_API_KEY is not set');
-    client = new OpenAI({ apiKey });
-  }
-  return client;
-}
-
-async function _analyzeScreen(base64Image) {
-  const response = await getClient().chat.completions.create({
-    model: process.env.SCAMGUARD_LLM_MODEL || 'gpt-4o',
-    max_tokens: 300,
-    messages: [
-      { role: 'system', content: SYSTEM_PROMPT },
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'image_url',
-            image_url: { url: `data:image/png;base64,${base64Image}` },
-          },
-          { type: 'text', text: 'Analyze this screenshot for scam indicators.' },
-        ],
-      },
-    ],
+async function analyzeScreen(base64Image) {
+  const res = await fetch(`${BACKEND_URL}/api/v1/scans/scan`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image_b64: base64Image, context_text: '', source: 'interval' }),
   });
 
-  const text = response.choices[0].message.content.trim();
-  return JSON.parse(text);
-}
+  if (!res.ok) throw new Error(`Backend scan failed: ${res.status}`);
 
-const analyzeScreen = weave
-  ? weave.op(_analyzeScreen, { name: 'scamguard.analyzeScreen' })
-  : _analyzeScreen;
+  const data = await res.json();
+
+  // Normalize the rich ScanResult to the shape callers expect
+  return {
+    suspicious: data.verdict !== 'safe',
+    severity: data.risk_score > 0.7 ? 'critical' : data.risk_score > 0.4 ? 'medium' : 'low',
+    reason: data.advice || (data.reasons && data.reasons[0]) || '',
+    detected: data.reasons || [],
+    verdict: data.verdict,
+    risk_score: data.risk_score,
+  };
+}
 
 module.exports = { analyzeScreen };

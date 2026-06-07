@@ -135,3 +135,51 @@ class ContactRequest(BaseModel):
         description="Email address or domain, e.g. 'anna@luma-mail.com' or 'luma-mail.com'."
     )
     trusted: bool
+
+
+# ---------------------------------------------------------------------------
+# Electron detector models — process scanner, network monitor, alert history
+# ---------------------------------------------------------------------------
+
+
+class ProcessDetection(BaseModel):
+    name: str
+    pid: str
+    category: Literal["remote_access", "suspicious_tool"]
+
+
+class ProcessDetectionReport(BaseModel):
+    processes: list[ProcessDetection]
+    session_id: str = ""
+
+
+class NetworkEvent(BaseModel):
+    type: Literal["BANKING_SITE", "MALICIOUS_URL"]
+    severity: Literal["info", "critical"]
+    url: str = ""
+    hostname: str = ""
+    source: str = "web_request"
+    session_id: str = ""
+
+
+class AlertRecord(BaseModel):
+    type: str
+    severity: str
+    title: str
+    message: str
+    timestamp: int
+    data: dict = Field(default_factory=dict)
+    session_id: str = ""
+
+
+class AlertHistoryResponse(BaseModel):
+    alerts: list[AlertRecord]
+
+
+class ThreatRules(BaseModel):
+    """Threat intelligence served to all Electron clients."""
+
+    remote_access: list[str]
+    suspicious_tools: list[str]
+    banking_domains: list[str]
+    malicious_patterns: list[str]

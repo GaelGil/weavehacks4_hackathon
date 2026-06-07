@@ -18,8 +18,8 @@ try {
 
 const { captureScreen } = require('./modules/screenCapture');
 const { analyzeScreen } = require('./modules/llmAnalyzer');
-const { scanProcesses } = require('./modules/processScanner');
-const { startWebRequestMonitor, startSniffer, stopSniffer } = require('./modules/networkMonitor');
+const { initialize: initProcessScanner, scanProcesses, reportDetections } = require('./modules/processScanner');
+const { initialize: initNetworkMonitor, startWebRequestMonitor, startSniffer, stopSniffer } = require('./modules/networkMonitor');
 const { buildAlert, getAlertHistory } = require('./modules/alertManager');
 
 // ---------------------------------------------------------------------------
@@ -143,6 +143,8 @@ async function runProcessScan() {
 
     detectorState.processScanner.lastRun = Date.now();
     detectorState.processScanner.lastResult = found;
+
+    if (found.length) reportDetections(found); // persist to backend, fire-and-forget
 
     for (const proc of found) {
       const type = proc.category === 'remote_access' ? 'REMOTE_ACCESS_TOOL' : 'SUSPICIOUS_PROCESS';
@@ -271,9 +273,13 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 // App lifecycle
 // ---------------------------------------------------------------------------
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   createMainWindow();
   setupAutoUpdater();
+
+  // Fetch threat intel from backend before starting detectors so the live rules
+  // are in effect from the very first scan/poll cycle.
+  await Promise.all([initProcessScanner(), initNetworkMonitor()]);
 
   startNetworkMonitor();
   startScreenAnalysisLoop();

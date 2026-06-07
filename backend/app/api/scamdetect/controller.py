@@ -1,3 +1,4 @@
+import time
 import uuid
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, Query, Request, UploadFile
@@ -17,8 +18,55 @@ from app.database.schemas.Scan import (
     TrustedContactsResponse,
 )
 from app.limiter import limiter
-from app.models import AdvisorRequest, ScanRequest, ScanResult
+from app.models import (
+    AdvisorRequest,
+    AlertHistoryResponse,
+    AlertRecord,
+    NetworkEvent,
+    ProcessDetectionReport,
+    ScanRequest,
+    ScanResult,
+    ThreatRules,
+)
 from app.services.redis_store import get_store
+
+# ---------------------------------------------------------------------------
+# Threat intelligence — single authoritative source for all Electron clients.
+# Updating these lists is enough; no client rebuild required.
+# ---------------------------------------------------------------------------
+
+_REMOTE_ACCESS = [
+    "AnyDesk.exe", "TeamViewer.exe", "ScreenConnect.exe",
+    "LogMeIn.exe", "Supremo.exe", "RemotePC.exe",
+    "UltraVNC.exe", "RealVNC.exe", "TightVNC.exe",
+    "GoToMeeting.exe", "ShowMyPC.exe", "Ammyy.exe",
+    "AmmyyAdmin.exe", "ISL Online.exe", "Zoho Assist.exe",
+    "NetSupport.exe", "DWService.exe", "Getscreen.exe",
+]
+_SUSPICIOUS_TOOLS = [
+    "ProcessHacker.exe", "autoruns.exe", "procexp.exe",
+    "procexp64.exe", "Wireshark.exe", "NetworkMiner.exe",
+]
+_BANKING_DOMAINS = [
+    "chase.com", "bankofamerica.com", "wellsfargo.com",
+    "citibank.com", "usbank.com", "capitalone.com",
+    "tdbank.com", "pnc.com", "schwab.com",
+    "fidelity.com", "vanguard.com", "etrade.com",
+    "paypal.com", "venmo.com", "zelle.com",
+    "ally.com", "discover.com", "suntrust.com",
+    "regions.com", "truist.com", "hsbc.com",
+    "barclays.com", "navyfederal.org", "usaa.com",
+    "bankofthewest.com", "fifththird.com", "keybank.com",
+    "huntington.com", "citizens.com",
+]
+_MALICIOUS_PATTERNS = [
+    r"\.(ru|cn)\/.*login",
+    r"paypal.*\.(?!paypal\.com)",
+    r"secure.*bank.*\.tk",
+    r"gift.?card",
+    r"microsoft.*support.*\d{10}",
+    r"apple.*security.*alert",
+]
 
 router = APIRouter(prefix="/scans", tags=["scans"])
 settings = get_settings()
@@ -101,6 +149,52 @@ async def advisor_chat(req: AdvisorRequest) -> dict:
         )
     answer = await advisor.chat(req.question, context)
     return {"answer": answer}
+
+
+@router.get("/config/threat-rules", response_model=ThreatRules)
+def get_threat_rules() -> ThreatRules:
+    """Return the authoritative blocklist, banking domains, and URL patterns."""
+    return ThreatRules(
+        remote_access=_REMOTE_ACCESS,
+        suspicious_tools=_SUSPICIOUS_TOOLS,
+        banking_domains=_BANKING_DOMAINS,
+        malicious_patterns=_MALICIOUS_PATTERNS,
+    )
+
+
+@router.post("/detections/processes")
+def report_processes(report: ProcessDetectionReport) -> dict:
+    """Receive process detections from the Electron app and persist them."""
+    store = get_store()
+    ts = int(time.time() * 1000)
+    for proc in report.processes:
+        store.push_process_detection(
+            {**proc.model_dump(), "session_id": report.session_id, "timestamp": ts}
+        )
+    return {"stored": len(report.processes)}
+
+
+@router.post("/detections/network")
+def report_network_event(event: NetworkEvent) -> dict:
+    """Receive a network threat event from the Electron app and persist it."""
+    store = get_store()
+    store.push_network_event(
+        {**event.model_dump(), "timestamp": int(time.time() * 1000)}
+    )
+    return {"stored": 1}
+
+
+@router.post("/alerts")
+def store_alert(alert: AlertRecord) -> dict:
+    """Persist an alert raised by any detection pillar."""
+    get_store().push_alert(alert.model_dump())
+    return {"stored": True}
+
+
+@router.get("/alerts", response_model=AlertHistoryResponse)
+def get_alerts(limit: int = Query(default=100, le=1000)) -> AlertHistoryResponse:
+    alerts = [AlertRecord(**a) for a in get_store().get_alerts(limit)]
+    return AlertHistoryResponse(alerts=alerts)
 
 
 @router.post("/trusted-contacts", response_model=TrustedContactsResponse)

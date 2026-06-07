@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ScamGuard — Codebase Flow</title>
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      background: #0f1117;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 32px;
+    }
+    h1 {
+      font-size: 1.6rem;
+      font-weight: 700;
+      margin-bottom: 6px;
+      color: #f8fafc;
+    }
+    .subtitle {
+      font-size: 0.875rem;
+      color: #94a3b8;
+      margin-bottom: 32px;
+    }
+    .diagram-card {
+      background: #1e2130;
+      border: 1px solid #2d3250;
+      border-radius: 12px;
+      padding: 32px;
+      margin-bottom: 32px;
+    }
+    .diagram-card h2 {
+      font-size: 1rem;
+      font-weight: 600;
+      color: #a5b4fc;
+      margin-bottom: 20px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+    .mermaid {
+      display: flex;
+      justify-content: center;
+    }
+    .legend {
+      display: flex;
+      gap: 24px;
+      flex-wrap: wrap;
+      margin-top: 24px;
+      padding-top: 20px;
+      border-top: 1px solid #2d3250;
+    }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.8rem;
+      color: #94a3b8;
+    }
+    .legend-dot {
+      width: 12px;
+      height: 12px;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body>
+  <h1>ScamGuard — Codebase Flow</h1>
+  <p class="subtitle">Request flow from Electron desktop client through FastAPI backend to agent pipeline</p>
+
+  <div class="diagram-card">
+    <h2>Architecture Overview</h2>
+    <div class="mermaid">
+flowchart LR
+    subgraph client ["Electron Desktop App"]
+        detectionModules["Detection Modules\nScreen · Process · Network"]
+        electronApp["Electron App\nRenderer + IPC Bridge"]
+    end
+
+    subgraph gateway ["FastAPI Gateway"]
+        fastapiApp["FastAPI\nmain.py + CORS + Weave"]
+        apiRouter["API Router\n/api/v1"]
+    end
+
+    subgraph service ["Backend Services"]
+        scanController["Scan Controller\nPOST /scans/scan\nRate limit: 5/min"]
+        scanService["ScanService\nBusiness Logic\nWebSocket Broadcasts"]
+        agentPipeline["Agent Pipeline\nOrchestrator"]
+        redactorAgent["Redactor Agent\nPrivacy Detection\nRedactionResult"]
+        collectorAgent["Collector Agent\nFact Extraction\nScreenFacts"]
+        researcherAgent["Researcher Agent\nWeb + Redis Search\nResearchFindings"]
+        advisorAgent["Advisor Agent\nFinal Verdict\nScamVerdict"]
+        copilotService["CopilotKit Service\nChat /copilotkit"]
+    end
+
+    subgraph datastore ["Data Stores"]
+        postgres["PostgreSQL\nScans DB\nSQLModel ORM"]
+        redis["Redis\nVector Store + Verdict Cache\nContact Store"]
+    end
+
+    subgraph external ["External APIs"]
+        openaiAPI["OpenAI API\nGPT-4.1 Vision + Embeddings"]
+    end
+
+    detectionModules -->|"Captured screenshot\nbase64 PNG"| electronApp
+    electronApp -->|"POST /scans/scan"| fastapiApp
+    fastapiApp -->|"Routes"| apiRouter
+    apiRouter -->|"Routes /scans"| scanController
+    apiRouter -->|"Routes /copilotkit"| copilotService
+    scanController -->|"Delegates"| scanService
+    scanService -->|"Orchestrates"| agentPipeline
+    scanService -->|"Writes scan record"| postgres
+    agentPipeline -->|"Parallel"| redactorAgent
+    agentPipeline -->|"Parallel"| collectorAgent
+    redactorAgent -->|"RedactionResult"| researcherAgent
+    collectorAgent -->|"ScreenFacts"| researcherAgent
+    researcherAgent -->|"ResearchFindings"| advisorAgent
+    researcherAgent -->|"Vector similarity search"| redis
+    agentPipeline -->|"Verdict cache lookup"| redis
+    redactorAgent -.->|"OpenAI: Vision"| openaiAPI
+    collectorAgent -.->|"OpenAI: Vision"| openaiAPI
+    researcherAgent -.->|"OpenAI: Embeddings"| openaiAPI
+    advisorAgent -.->|"OpenAI: Vision + Verdict"| openaiAPI
+    </div>
+
+    <div class="legend">
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#4f46e5"></div>
+        <span>Client (Electron)</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#0ea5e9"></div>
+        <span>Gateway (FastAPI)</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#7c3aed"></div>
+        <span>Services + Agents</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#d97706"></div>
+        <span>Data Stores</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#059669"></div>
+        <span>External APIs</span>
+      </div>
+      <div class="legend-item">
+        <div class="legend-dot" style="background:#475569; border: 1px dashed #94a3b8"></div>
+        <span>Dotted = External API call</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <h2>Agent Pipeline Detail</h2>
+    <div class="mermaid">
+flowchart LR
+    A["ScanRequest\nimage_b64 + session_id"] --> B["pipeline.run_scan\nagents/pipeline.py"]
+
+    B -->|"Parallel"| C["redactor.py\nPrivacy Redactor\nVision Agent"]
+    B -->|"Parallel"| D["collector.py\nCollect Data\nVision Agent"]
+
+    C -->|"RedactionResult\nsensitive_kinds, note"| F["researcher.py\nResearch Agent\nWeb + Redis Search"]
+    D -->|"ScreenFacts\nsender, subject, links,\nurgency signals, raw text"| F
+
+    B --> E["redis_store.py\nTrusted Contact Lookup"]
+    E -->|"trust_note"| F
+
+    F -->|"ResearchFindings\ndomain_assessment,\nscam indicators"| G["advisor.py\nAdvisor Agent\nVision + Full Context"]
+
+    F -->|"Embedding similarity"| H["redis_vector_store.py\nRedisScamVectorStore"]
+    H -->|"Similar scams / legit msgs"| F
+
+    G -->|"ScamVerdict\nverdict, risk_score,\nreasons, actions"| I["ScanResult\n→ JSON Response"]
+
+    B -->|"Cache by image hash"| J["Redis\nVerdict Cache"]
+    J -.->|"Cache hit: skip pipeline"| I
+    </div>
+  </div>
+
+  <div class="diagram-card">
+    <h2>Frontend Request Detail</h2>
+    <div class="mermaid">
+flowchart LR
+    U["User clicks\nCheck my screen"] --> SP["ScanPanel.tsx\nrenderer/src/components"]
+
+    SP -->|"window.electronAPI\n.captureScreen()"| IPC["preload.js\nIPC ContextBridge"]
+    IPC -->|"ipcMain.handle\ncapture-screen"| MAIN["main.js\nElectron Main Process"]
+    MAIN -->|"screenCapture.js\ndesktopCapturer"| SCREEN["Primary display\nbase64 PNG"]
+    SCREEN -->|"Returns image"| SP
+
+    SP -->|"api.scanScreen(imageB64)"| API["api.ts\nHTTP Client\nlib/api.ts"]
+    API -->|"POST /api/v1/scans/scan"| BACK["FastAPI Backend\nlocalhost:8000"]
+    BACK -->|"ScanResult JSON"| SP
+
+    SP --> RENDER["Render verdict\nrisk score · reasons\nsuggested actions"]
+
+    SP --> CK["useCopilotReadable()\nExpose scan context"]
+    CK --> SIDEBAR["CopilotKit Sidebar\nChat UI"]
+    SIDEBAR -->|"Action: askScamAdvisor"| CKRT["copilotkit-runtime.mjs\nNode.js bridge port 4000"]
+    CKRT -->|"POST /copilotkit"| BACK
+
+    MAIN --> DETECT["Detection Loops"]
+    DETECT --> D1["screenCapture.js\n15s poll"]
+    DETECT --> D2["processScanner.js\n10s poll, RAT detection"]
+    DETECT --> D3["networkMonitor.js\nwebRequest filter"]
+    D1 -->|"Auto-scan"| API
+    D2 -->|"Alert"| ALERT["alertManager.js\nHistory ring buffer"]
+    D3 -->|"Alert"| ALERT
+    </div>
+  </div>
+
+  <script>
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        primaryColor: '#4f46e5',
+        primaryTextColor: '#e2e8f0',
+        primaryBorderColor: '#6366f1',
+        lineColor: '#94a3b8',
+        secondaryColor: '#1e2130',
+        tertiaryColor: '#0f1117',
+        edgeLabelBackground: '#1e2130',
+        clusterBkg: '#1a1d2e',
+        clusterBorder: '#2d3250',
+        titleColor: '#f8fafc',
+        nodeTextColor: '#e2e8f0',
+        fontSize: '13px'
+      },
+      flowchart: {
+        curve: 'basis',
+        padding: 20,
+        htmlLabels: true
+      }
+    });
+  </script>
+</body>
+</html>

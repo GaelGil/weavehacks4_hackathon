@@ -1,3 +1,5 @@
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
+
 const ALERT_CONFIG = {
   REMOTE_ACCESS_TOOL: {
     severity: 'critical',
@@ -36,9 +38,28 @@ const ALERT_CONFIG = {
   },
 };
 
-// In-memory ring buffer of recent alerts for agent context queries
+// In-memory ring buffer for immediate UI queries
 const MAX_HISTORY = 100;
 const alertHistory = [];
+
+async function persistAlert(alert) {
+  try {
+    await fetch(`${BACKEND_URL}/api/v1/scans/alerts`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: alert.type,
+        severity: alert.severity,
+        title: alert.title,
+        message: alert.message,
+        timestamp: alert.timestamp,
+        data: alert.data || {},
+      }),
+    });
+  } catch (_) {
+    // Fire-and-forget — local history still works even if backend is down
+  }
+}
 
 function buildAlert(type, data) {
   const config = ALERT_CONFIG[type] || ALERT_CONFIG.SCREEN_ANALYSIS;
@@ -46,6 +67,8 @@ function buildAlert(type, data) {
 
   alertHistory.push(alert);
   if (alertHistory.length > MAX_HISTORY) alertHistory.shift();
+
+  persistAlert(alert); // async, non-blocking
 
   return alert;
 }
