@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"  # reasoning/judgment (advisor, researcher)
+    openai_model: str = "gpt-4o-mini"  # reasoning/judgment (advisor, researcher)
     openai_vision_model: str = (
         "gpt-4o-mini"  # cheap screen scraping (collector, redactor)
     )

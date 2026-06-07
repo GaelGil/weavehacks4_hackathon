@@ -147,7 +147,7 @@ function startScreenAnalysisLoop() {
 // Process scanner (Pillar 2)
 // ---------------------------------------------------------------------------
 
-const PROCESS_ALERT_COOLDOWN_MS = 60_000;
+const PROCESS_ALERT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_PROCESS_COOLDOWN) || 60_000;
 
 async function runProcessScan() {
   if (process.platform !== 'win32') return;
@@ -187,7 +187,7 @@ function startProcessScanLoop() {
 // Browser title scan (Pillar 2b — detect banking in the user's real browser)
 // ---------------------------------------------------------------------------
 
-const BANKING_ALERT_COOLDOWN_MS = 60_000;
+const BANKING_ALERT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_BANKING_COOLDOWN) || 60_000;
 
 async function runBrowserTitleScan() {
   if (!detectorState.networkMonitor.enabled) return;
@@ -217,7 +217,7 @@ function startBrowserTitleScanLoop() {
 // Connection scan (Pillar 2c — active external TCP connections by process)
 // ---------------------------------------------------------------------------
 
-const CONNECTION_ALERT_COOLDOWN_MS = 120_000;
+const CONNECTION_ALERT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_CONNECTION_COOLDOWN) || 120_000;
 
 async function runConnectionScan() {
   if (process.platform !== 'win32') return;
@@ -265,7 +265,7 @@ function startConnectionScanLoop() {
 // alone justifies a critical non-dismissable alert; together they do.
 // ---------------------------------------------------------------------------
 
-const BANKING_CONTEXT_COOLDOWN_MS = 90_000;
+const BANKING_CONTEXT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_BANKING_CONTEXT_COOLDOWN) || 90_000;
 
 function siteKeyFor(match) {
   return (match.hostname || match.domain || '').toLowerCase();

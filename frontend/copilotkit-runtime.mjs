@@ -32,7 +32,10 @@ const FASTAPI_REMOTE = "http://localhost:8000/copilotkit";
 
 const app = express();
 
-const serviceAdapter = new OpenAIAdapter({ model: "gpt-4o" });
+// Was hardcoded to "gpt-4o" (the priciest chat model). Now driven by OPENAI_MODEL
+// (loaded from backend/.env above) so cost/quality is tuned in one place — and
+// defaults to the cheap gpt-4o-mini if the var is somehow missing.
+const serviceAdapter = new OpenAIAdapter({ model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
 
 const runtime = new CopilotRuntime({
   // Register the FastAPI Python endpoint so its actions/agents are available to the chat.
