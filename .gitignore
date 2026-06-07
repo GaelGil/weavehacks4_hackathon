@@ -5,6 +5,8 @@ frontend/release
 frontend/dist
 
 # Python
+.venv/
+venv/
 backend/.venv
 backend/venv
 __pycache__/
