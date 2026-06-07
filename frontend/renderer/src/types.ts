@@ -38,8 +38,31 @@ export interface ElectronAPI {
   onUpdateStatus: (cb: (data: any) => void) => () => void;
 }
 
+// Mirrors the alerts built by frontend/modules/alertManager.js (buildAlert).
+export interface ScamGuardAlert {
+  type: string;
+  severity: "critical" | "warning" | "info";
+  title: string;
+  message: string;
+  timestamp: number;
+  dismissable?: boolean;
+  autoDismissMs?: number;
+  data?: unknown;
+}
+
+// Exposed from preload.js via contextBridge (the detection-layer API).
+export interface ScamGuardAPI {
+  onAlert: (cb: (alert: ScamGuardAlert) => void) => () => void;
+  onDashboardAlert: (cb: (alert: ScamGuardAlert) => void) => () => void;
+  dismissAlert: () => void;
+  getProtectionStatus: () => Promise<unknown>;
+  getAlertHistory: () => Promise<ScamGuardAlert[]>;
+  toggleDetector: (name: string, enabled: boolean) => Promise<unknown>;
+}
+
 declare global {
   interface Window {
     electronAPI: ElectronAPI;
+    scamGuard: ScamGuardAPI;
   }
 }

@@ -28,7 +28,7 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const PORT = 4000;
-const FASTAPI_REMOTE = "http://localhost:8000/copilotkit";
+const FASTAPI_REMOTE = "http://127.0.0.1:8000/copilotkit";
 
 const app = express();
 

@@ -8,12 +8,15 @@ is unreachable, calls return empty/no-op results so the rest of the app keeps wo
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import io
 import json
 
 import numpy as np
 import redis
 from openai import OpenAI
+from PIL import Image
 from redis.commands.search.field import TagField, TextField, VectorField
 from redis.commands.search.query import Query
 
@@ -30,9 +33,45 @@ from ..models import SimilarExample
 # so the ResearchAgent can pull two-sided comparison evidence.
 EXAMPLE_INDEX = "example_idx"
 EXAMPLE_PREFIX = "example:"
+
+
+def _perceptual_hash(image_b64: str) -> int:
+    """Difference-hash (dHash): a 64-bit fingerprint of what the image LOOKS like.
+
+    Resize to 9x8 grayscale, then for each row record whether each pixel is brighter
+    than the one to its right (8 comparisons x 8 rows = 64 bits). This is deliberately
+    coarse — a blinking cursor, font antialiasing, or a ticking clock barely move these
+    bits, but a different email/page/app changes large regions and flips many of them.
+    Raises on undecodable input; callers treat that as "can't hash, so don't cache".
+    """
+    raw = base64.b64decode(image_b64)
+    img = Image.open(io.BytesIO(raw)).convert("L").resize((9, 8), Image.LANCZOS)
+    pixels = np.asarray(img, dtype=np.int16)
+    bits = pixels[:, :-1] > pixels[:, 1:]
+    value = 0
+    for bit in bits.flatten():
+        value = (value << 1) | int(bit)
+    return value
+
+
+def _hamming(a: int, b: int) -> int:
+    return bin(a ^ b).count("1")
 CONTACT_PREFIX = "contact:"
-CACHE_VERSION = "v3"
+# v4: cache key switched from a raw-byte SHA1 (which misses on every cursor blink,
+# antialiasing jitter, or ticking clock) to a perceptual hash with fuzzy matching —
+# see _perceptual_hash / _hamming below.
+CACHE_VERSION = "v4"
 CACHE_PREFIX = f"verdict:{CACHE_VERSION}:"
+# dHash produces an 8x8 = 64-bit fingerprint. Two screenshots of the *same* on-screen
+# content typically differ by 0-3 bits (cursor/clock/AA noise); genuinely different
+# content (a new email, a scrolled page) typically flips 15+ bits. 6 is a conservative
+# midpoint — tune up if real changes are being cached, down if noise still misses.
+PHASH_HAMMING_THRESHOLD = 6
+# How many recent (hash, cache_key) pairs we keep around to fuzzy-match against. Bounded
+# small on purpose: at a 15s poll / 300s TTL there are at most ~20 live entries anyway,
+# so a linear Hamming scan over this list is a handful of XOR+popcount ops, not a search.
+RECENT_PHASH_LIMIT = 40
+RECENT_PHASH_KEY = "scamguard:cache:recent_phashes"
 EMBED_DIM = 1536  # text-embedding-3-small
 
 ALERT_KEY = "scamguard:alerts"
@@ -180,19 +219,58 @@ class RedisStore:
             return None
         return val == b"1" or val == "1"
 
-    # ---------- verdict cache (skip re-scanning an unchanged screen) ----------
+    # ---------- verdict cache (skip re-scanning a screen that LOOKS unchanged) ----------
+    # Keyed on a perceptual hash of the screenshot with fuzzy (Hamming-distance) matching,
+    # NOT the raw image bytes — a byte-exact hash misses on every cursor blink, AA jitter,
+    # or ticking clock, which makes the cache a near-permanent miss during active use.
+    def _recent_phashes(self) -> list[tuple[int, str]]:
+        if not self.r:
+            return []
+        out: list[tuple[int, str]] = []
+        for raw in self.r.lrange(RECENT_PHASH_KEY, 0, RECENT_PHASH_LIMIT - 1):
+            try:
+                phash_hex, cache_key = json.loads(raw)
+                out.append((int(phash_hex, 16), cache_key))
+            except Exception:  # noqa: BLE001 - corrupt entry; skip it
+                continue
+        return out
+
+    def _remember_phash(self, phash: int, cache_key: str, ttl: int) -> None:
+        if not self.r:
+            return
+        entry = json.dumps([format(phash, "016x"), cache_key])
+        pipe = self.r.pipeline()
+        pipe.lpush(RECENT_PHASH_KEY, entry)
+        pipe.ltrim(RECENT_PHASH_KEY, 0, RECENT_PHASH_LIMIT - 1)
+        pipe.expire(RECENT_PHASH_KEY, ttl)
+        pipe.execute()
+
     def cache_get(self, image_b64: str) -> dict | None:
         if not self.r:
             return None
-        key = CACHE_PREFIX + hashlib.sha1(image_b64.encode()).hexdigest()
-        raw = self.r.get(key)
-        return json.loads(raw) if raw else None
+        try:
+            phash = _perceptual_hash(image_b64)
+        except Exception as e:  # noqa: BLE001 - bad/undecodable image; just don't cache
+            print(f"[redis_store] perceptual hash failed on lookup: {e}")
+            return None
+        for candidate, cache_key in self._recent_phashes():
+            if _hamming(phash, candidate) <= PHASH_HAMMING_THRESHOLD:
+                raw = self.r.get(cache_key)
+                if raw:
+                    return json.loads(raw)
+        return None
 
     def cache_set(self, image_b64: str, result: dict, ttl: int = 300) -> None:
         if not self.r:
             return
-        key = CACHE_PREFIX + hashlib.sha1(image_b64.encode()).hexdigest()
-        self.r.set(key, json.dumps(result), ex=ttl)
+        try:
+            phash = _perceptual_hash(image_b64)
+        except Exception as e:  # noqa: BLE001 - bad/undecodable image; nothing to key on
+            print(f"[redis_store] perceptual hash failed on store: {e}")
+            return
+        cache_key = CACHE_PREFIX + format(phash, "016x")
+        self.r.set(cache_key, json.dumps(result), ex=ttl)
+        self._remember_phash(phash, cache_key, ttl)
 
     # ---------- alert history ----------
     def push_alert(self, alert: dict) -> None:

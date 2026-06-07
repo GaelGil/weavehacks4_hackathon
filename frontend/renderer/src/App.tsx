@@ -2,13 +2,16 @@ import { useEffect, useState } from "react";
 import { CopilotSidebar } from "@copilotkit/react-ui";
 import { useCopilotReadable } from "@copilotkit/react-core";
 import ScanPanel from "./components/ScanPanel";
-import type { ScanResult } from "./types";
+import type { ScamGuardAlert, ScanResult } from "./types";
 import { health } from "./lib/api";
+
+const MAX_VISIBLE_ALERTS = 5;
 
 export default function App() {
   const [scan, setScan] = useState<ScanResult | null>(null);
   const [version, setVersion] = useState("--");
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
+  const [alerts, setAlerts] = useState<(ScamGuardAlert & { id: string })[]>([]);
 
   useEffect(() => {
     window.electronAPI?.getAppVersion().then(setVersion).catch(() => {});
@@ -16,6 +19,25 @@ export default function App() {
       .then((h) => setBackendOk(h.ok))
       .catch(() => setBackendOk(false));
   }, []);
+
+  // Mirror live detector alerts (scam screens, remote-access tools, banking sites...)
+  // into the dashboard as dismissible toasts — the same events the full-screen overlay
+  // shows, but visible here too when the overlay isn't focused or has been dismissed.
+  useEffect(() => {
+    const dismissAfter = (id: string, ms: number) =>
+      setTimeout(() => setAlerts((prev) => prev.filter((a) => a.id !== id)), ms);
+
+    const unsubscribe = window.scamGuard?.onDashboardAlert((alert) => {
+      const id = `${alert.type}-${alert.timestamp}`;
+      setAlerts((prev) => [{ ...alert, id }, ...prev].slice(0, MAX_VISIBLE_ALERTS));
+      if (alert.autoDismissMs) dismissAfter(id, alert.autoDismissMs);
+    });
+
+    return unsubscribe;
+  }, []);
+
+  const dismissAlert = (id: string) =>
+    setAlerts((prev) => prev.filter((a) => a.id !== id));
 
   // Make the latest scan visible to the CopilotKit advisor chat.
   useCopilotReadable({
@@ -25,6 +47,28 @@ export default function App() {
 
   return (
     <div className="layout">
+      {alerts.length > 0 && (
+        <div className="alert-stack">
+          {alerts.map((alert) => (
+            <div key={alert.id} className={`toast-alert ${alert.severity}`}>
+              <div className="toast-alert-body">
+                <strong>{alert.title}</strong>
+                <span>{alert.message}</span>
+              </div>
+              {alert.dismissable !== false && (
+                <button
+                  className="toast-dismiss"
+                  aria-label="Dismiss alert"
+                  onClick={() => dismissAlert(alert.id)}
+                >
+                  ✕
+                </button>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+
       <header>
         <div className="brand">
           <span className="logo">🛡️</span>

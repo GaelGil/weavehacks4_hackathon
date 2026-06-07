@@ -1,4 +1,7 @@
-const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
+// 127.0.0.1, NOT localhost: on Windows, "localhost" resolves to the IPv6
+// loopback ::1 first, and Docker Desktop/WSL2's port-forwarding for ::1 hangs
+// indefinitely instead of refusing — every fetch() below would silently freeze.
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://127.0.0.1:8000';
 
 const ALERT_CONFIG = {
   REMOTE_ACCESS_TOOL: {

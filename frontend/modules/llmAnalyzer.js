@@ -1,7 +1,10 @@
 // Screen analysis delegated entirely to the backend pipeline.
 // The frontend captures the screenshot; all LLM reasoning runs server-side.
 
-const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
+// 127.0.0.1, NOT localhost: on Windows, "localhost" resolves to the IPv6
+// loopback ::1 first, and Docker Desktop/WSL2's port-forwarding for ::1 hangs
+// indefinitely instead of refusing — every fetch() below would silently freeze.
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://127.0.0.1:8000';
 
 async function analyzeScreen(base64Image) {
   const res = await fetch(`${BACKEND_URL}/api/v1/scans/scan`, {

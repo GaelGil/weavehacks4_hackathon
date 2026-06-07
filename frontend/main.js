@@ -78,13 +78,31 @@ function createMainWindow() {
 // We hide ScamGuard's own window first so the screenshot captures what the user is
 // actually looking at (the email/webpage behind us), not ScamGuard itself.
 function createOverlayWindow() {
+  // Sized to the banner's actual footprint — a strip across the TOP of the screen
+  // (see #alert in overlay.html: `top: 0; left: 0; right: 0`) — NOT fullscreen.
+  //
+  // dispatchAlert() below switches this window into "capture clicks" mode whenever
+  // a dismissable alert is shown, so the user can reach the Dismiss button. A
+  // fullscreen transparent window in capture mode swallows mouse input across the
+  // ENTIRE display, not just the visible banner — that was the previous bug ("covers
+  // every other app, can't use your computer"). Confining the window to the banner
+  // strip means capture mode can only ever block clicks within that strip; everything
+  // below it stays fully interactive regardless of alert state.
+  const { width } = screen.getPrimaryDisplay().workAreaSize;
+  const BANNER_HEIGHT = 260; // generous for title + the longest alert message + padding
+
   overlayWindow = new BrowserWindow({
+    x: 0,
+    y: 0,
+    width,
+    height: BANNER_HEIGHT,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    resizable: false,
+    movable: false,
     focusable: false,
-    fullscreen: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -93,8 +111,10 @@ function createOverlayWindow() {
   });
 
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
-  // Pass-through mouse events so the user can still use the desktop normally.
-  // Temporarily lifted when an undismissable alert needs interaction.
+  // Mouse events pass through by default, so whatever's beneath the banner strip
+  // stays clickable. dispatchAlert() captures clicks ONLY while a dismissable
+  // alert's "Dismiss" button needs to be reachable — see the comment above for why
+  // that's now safe to do without locking up the rest of the screen.
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 }
 
@@ -139,7 +159,12 @@ async function runScreenAnalysis() {
 }
 
 function startScreenAnalysisLoop() {
-  const interval = parseInt(process.env.SCAMGUARD_POLL_INTERVAL) || 15000;
+  // This is the ONLY loop that triggers OpenAI calls (each cache-miss screenshot runs
+  // 4 LLM stages — see backend/app/agents/pipeline.py). 5 minutes keeps the protection
+  // responsive without re-paying for a near-identical screen every few seconds.
+  // Override via SCAMGUARD_POLL_INTERVAL (ms) if you need tighter/looser cadence —
+  // see scripts/start-demo.ps1 for the demo-speed value.
+  const interval = parseInt(process.env.SCAMGUARD_POLL_INTERVAL) || 5 * 60 * 1000;
   screenPollTimer = setInterval(runScreenAnalysis, interval);
 }
 
@@ -423,6 +448,7 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.whenReady().then(async () => {
   createMainWindow();
+  createOverlayWindow();
   setupAutoUpdater();
 
   // Fetch threat intel from backend before starting detectors so the live rules

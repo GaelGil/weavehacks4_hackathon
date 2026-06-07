@@ -14,6 +14,7 @@
 #>
 
 # Detector polling — how often each pillar re-checks the system.
+$env:SCAMGUARD_POLL_INTERVAL          = "30000"  # default 300000 (5min) — the LLM screen-analysis loop
 $env:SCAMGUARD_BROWSER_TITLE_INTERVAL = "4000"   # default 8000
 $env:SCAMGUARD_PROCESS_INTERVAL       = "5000"   # default 10000
 $env:SCAMGUARD_CONNECTION_INTERVAL    = "6000"   # default 15000
@@ -29,7 +30,7 @@ Write-Host ""
 Write-Host "===================================================================" -ForegroundColor Cyan
 Write-Host " ScamGuard — DEMO MODE" -ForegroundColor Cyan
 Write-Host "===================================================================" -ForegroundColor Cyan
-Write-Host " Detector polling : titles=4s   processes=5s   connections=6s"
+Write-Host " Detector polling : screen=30s   titles=4s   processes=5s   connections=6s"
 Write-Host " Alert cooldowns  : 15-20s (vs. 60-120s in production)"
 Write-Host ""
 Write-Host " In another terminal, run scripts\simulate-scam.ps1 to trigger"
