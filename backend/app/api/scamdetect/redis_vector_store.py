@@ -9,7 +9,13 @@ from app.database.schemas.Scan import ScanRiskLevel
 
 class RedisScamVectorStore:
     def __init__(self) -> None:
-        self._client = Redis.from_url(settings.REDIS_URL, decode_responses=False) if settings.REDIS_URL else None
+        # Force RESP2: redis-py's FT.SEARCH parser returns 0 results under RESP3 on
+        # Redis 8, so vector/KNN search silently comes back empty otherwise.
+        self._client = (
+            Redis.from_url(settings.REDIS_URL, decode_responses=False, protocol=2)
+            if settings.REDIS_URL
+            else None
+        )
 
     def index_confirmed_scam(
         self,

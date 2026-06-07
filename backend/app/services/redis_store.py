@@ -55,8 +55,10 @@ class RedisStore:
             else None
         )
         try:
+            # Force RESP2: redis-py's FT.SEARCH result parser returns 0 results under
+            # RESP3 on Redis 8 (vector/KNN search silently comes back empty otherwise).
             self.r: redis.Redis | None = redis.from_url(
-                self.settings.redis_url, decode_responses=False
+                self.settings.redis_url, decode_responses=False, protocol=2
             )
             self.r.ping()
         except Exception as e:  # noqa: BLE001
