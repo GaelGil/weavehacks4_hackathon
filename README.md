@@ -51,7 +51,7 @@ handled it ("🔎 Handled by Phishing Email Specialist").
 
 ## Sponsor tools
 - **W&B Weave** — tracing of every agent op + an `Evaluation` harness (`backend/eval/`).
-- **Redis** — vector (KNN) similarity search over a seeded scam + legit corpus, trusted/untrusted contacts, and a verdict cache. *(On Redis 8 the client forces RESP2 — see note below.)*
+- **Redis** — vector (KNN) similarity search over a seeded scam + legit corpus, trusted/untrusted contacts, and a verdict cache.
 - **CopilotKit** — the in-app chat sidebar (plain-language, scan-aware), powered by a self-hosted Node runtime → OpenAI.
 
 ## Repo layout
