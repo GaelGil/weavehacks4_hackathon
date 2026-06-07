@@ -13,6 +13,14 @@ services:
       timeout: 5s
       retries: 5
 
+  redis:
+    image: redis/redis-stack:latest
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: .
@@ -23,12 +31,14 @@ services:
       - ./backend/.env
     environment:
       - ENVIRONMENT=local
-      # Python debugging
       - PYTHONUNBUFFERED=1
       - PYTHONDONTWRITEBYTECODE=1
-      # FastAPI debugging
       - DEBUG=1
-    # Ensure all logs are captured
+      # Override the .env localhost URL with the compose service name
+      - REDIS_URL=redis://redis:6379
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
     volumes:
       - ./backend/app:/app/app
     logging:
@@ -36,11 +46,12 @@ services:
       options:
         max-size: "200k"
         max-file: "10"
-    # Keep container running for debugging
     tty: true
     stdin_open: true
     depends_on:
       db:
+        condition: service_healthy
+      redis:
         condition: service_healthy
 
 volumes:

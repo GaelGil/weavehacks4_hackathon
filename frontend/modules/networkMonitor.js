@@ -3,11 +3,13 @@ const { spawn } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const bankingDomains = new Set(
-  JSON.parse(fs.readFileSync(path.join(__dirname, '../resources/banking-domains.json'), 'utf8'))
-);
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
 
-const MALICIOUS_PATTERNS = [
+// Local files are fallbacks when the backend is unreachable.
+const localBankingDomains = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '../resources/banking-domains.json'), 'utf8')
+);
+const LOCAL_MALICIOUS_PATTERNS = [
   /\.(ru|cn)\/.*login/i,
   /paypal.*\.(?!paypal\.com)/i,
   /secure.*bank.*\.tk/i,
@@ -15,6 +17,34 @@ const MALICIOUS_PATTERNS = [
   /microsoft.*support.*\d{10}/i,
   /apple.*security.*alert/i,
 ];
+
+let bankingDomains = new Set(localBankingDomains);
+let maliciousPatterns = LOCAL_MALICIOUS_PATTERNS;
+
+async function initialize() {
+  try {
+    const res = await fetch(`${BACKEND_URL}/api/v1/scans/config/threat-rules`);
+    if (!res.ok) return;
+    const rules = await res.json();
+    bankingDomains = new Set(rules.banking_domains);
+    maliciousPatterns = rules.malicious_patterns.map((p) => new RegExp(p, 'i'));
+    console.log('[networkMonitor] loaded threat rules from backend');
+  } catch (_) {
+    console.warn('[networkMonitor] backend unreachable — using local threat rules');
+  }
+}
+
+async function reportNetworkEvent(event) {
+  try {
+    await fetch(`${BACKEND_URL}/api/v1/scans/detections/network`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+    });
+  } catch (_) {
+    // Fire-and-forget — never block the local alert dispatch
+  }
+}
 
 function normalizeHostname(hostname) {
   return hostname.replace(/^www\./, '').toLowerCase();
@@ -34,7 +64,7 @@ function checkUrl(rawUrl) {
     return { type: 'BANKING_SITE', severity: 'info', hostname };
   }
 
-  for (const pattern of MALICIOUS_PATTERNS) {
+  for (const pattern of maliciousPatterns) {
     if (pattern.test(rawUrl)) {
       return { type: 'MALICIOUS_URL', severity: 'critical', url: rawUrl };
     }
@@ -46,7 +76,10 @@ function checkUrl(rawUrl) {
 function startWebRequestMonitor(onAlert) {
   session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
     const match = checkUrl(details.url);
-    if (match) onAlert(match);
+    if (match) {
+      reportNetworkEvent(match); // persist to backend
+      onAlert(match);
+    }
     callback({ cancel: false }); // alert-only, never block
   });
 }
@@ -77,7 +110,9 @@ function startSniffer(onAlert) {
         if (event.type === 'dns_query') {
           const hostname = normalizeHostname(event.hostname);
           if (bankingDomains.has(hostname)) {
-            onAlert({ type: 'BANKING_SITE', severity: 'info', hostname, source: 'sidecar' });
+            const alert = { type: 'BANKING_SITE', severity: 'info', hostname, source: 'sidecar' };
+            reportNetworkEvent(alert); // persist to backend
+            onAlert(alert);
           }
         }
       } catch (_) {}
@@ -99,4 +134,4 @@ function stopSniffer() {
   }
 }
 
-module.exports = { startWebRequestMonitor, startSniffer, stopSniffer, checkUrl };
+module.exports = { initialize, startWebRequestMonitor, startSniffer, stopSniffer, checkUrl };

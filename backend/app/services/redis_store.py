@@ -31,11 +31,19 @@ from ..models import SimilarExample
 EXAMPLE_INDEX = "example_idx"
 EXAMPLE_PREFIX = "example:"
 CONTACT_PREFIX = "contact:"
-# Bump CACHE_VERSION whenever the pipeline/output shape changes so old cached
-# verdicts are never served after a redesign.
 CACHE_VERSION = "v3"
 CACHE_PREFIX = f"verdict:{CACHE_VERSION}:"
 EMBED_DIM = 1536  # text-embedding-3-small
+
+ALERT_KEY = "scamguard:alerts"
+DETECTION_PROCESS_KEY = "scamguard:detections:process"
+DETECTION_NETWORK_KEY = "scamguard:detections:network"
+MAX_STORED = 1000
+
+# In-memory fallbacks when Redis is unavailable
+_alert_fallback: list[dict] = []
+_process_fallback: list[dict] = []
+_network_fallback: list[dict] = []
 
 
 class RedisStore:
@@ -185,6 +193,41 @@ class RedisStore:
             return
         key = CACHE_PREFIX + hashlib.sha1(image_b64.encode()).hexdigest()
         self.r.set(key, json.dumps(result), ex=ttl)
+
+    # ---------- alert history ----------
+    def push_alert(self, alert: dict) -> None:
+        if self.r:
+            self.r.lpush(ALERT_KEY, json.dumps(alert))
+            self.r.ltrim(ALERT_KEY, 0, MAX_STORED - 1)
+        else:
+            _alert_fallback.insert(0, alert)
+            if len(_alert_fallback) > MAX_STORED:
+                _alert_fallback.pop()
+
+    def get_alerts(self, limit: int = 100) -> list[dict]:
+        if self.r:
+            return [json.loads(r) for r in self.r.lrange(ALERT_KEY, 0, limit - 1)]
+        return _alert_fallback[:limit]
+
+    # ---------- process detections ----------
+    def push_process_detection(self, detection: dict) -> None:
+        if self.r:
+            self.r.lpush(DETECTION_PROCESS_KEY, json.dumps(detection))
+            self.r.ltrim(DETECTION_PROCESS_KEY, 0, MAX_STORED - 1)
+        else:
+            _process_fallback.insert(0, detection)
+            if len(_process_fallback) > MAX_STORED:
+                _process_fallback.pop()
+
+    # ---------- network events ----------
+    def push_network_event(self, event: dict) -> None:
+        if self.r:
+            self.r.lpush(DETECTION_NETWORK_KEY, json.dumps(event))
+            self.r.ltrim(DETECTION_NETWORK_KEY, 0, MAX_STORED - 1)
+        else:
+            _network_fallback.insert(0, event)
+            if len(_network_fallback) > MAX_STORED:
+                _network_fallback.pop()
 
 
 _store: RedisStore | None = None
