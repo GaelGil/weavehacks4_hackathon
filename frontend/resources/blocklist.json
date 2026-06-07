@@ -10,5 +10,18 @@
   "suspicious_tools": [
     "ProcessHacker.exe", "autoruns.exe", "procexp.exe",
     "procexp64.exe", "Wireshark.exe", "NetworkMiner.exe"
+  ],
+  "screen_capture": [
+    "obs64.exe", "obs32.exe",
+    "bdcam.exe",
+    "Camtasia.exe",
+    "fraps.exe",
+    "ShareX.exe",
+    "GameBarFTServer.exe",
+    "Action.exe",
+    "debut.exe",
+    "Loom.exe",
+    "FlashBackRecorder.exe",
+    "snagit32.exe", "snagit64.exe"
   ]
 }

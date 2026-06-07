@@ -18,8 +18,8 @@ try {
 
 const { captureScreen } = require('./modules/screenCapture');
 const { analyzeScreen } = require('./modules/llmAnalyzer');
-const { initialize: initProcessScanner, scanProcesses, reportDetections } = require('./modules/processScanner');
-const { initialize: initNetworkMonitor, startWebRequestMonitor, startSniffer, stopSniffer } = require('./modules/networkMonitor');
+const { initialize: initProcessScanner, scanProcesses, reportDetections, scanBrowserTitles, isSuspiciousProcess, getCategoryForProcess } = require('./modules/processScanner');
+const { initialize: initNetworkMonitor, startWebRequestMonitor, startSniffer, stopSniffer, scanActiveConnections } = require('./modules/networkMonitor');
 const { buildAlert, getAlertHistory } = require('./modules/alertManager');
 
 // ---------------------------------------------------------------------------
@@ -35,6 +35,17 @@ let mainWindow;
 let overlayWindow;
 let screenPollTimer;
 let processScanTimer;
+let browserTitleScanTimer;
+let connectionScanTimer;
+
+// Suppress repeat banking alerts for the same domain within this window.
+const bankingAlertCooldown = new Map();
+// Suppress repeat connection alerts for the same process name.
+const connectionAlertCooldown = new Map();
+// Suppress repeat process alerts for the same process name.
+const processAlertCooldown = new Map();
+// Suppress repeat banking+remote-access correlation checks for the same site.
+const bankingContextCooldown = new Map();
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -67,13 +78,31 @@ function createMainWindow() {
 // We hide ScamGuard's own window first so the screenshot captures what the user is
 // actually looking at (the email/webpage behind us), not ScamGuard itself.
 function createOverlayWindow() {
+  // Sized to the banner's actual footprint — a strip across the TOP of the screen
+  // (see #alert in overlay.html: `top: 0; left: 0; right: 0`) — NOT fullscreen.
+  //
+  // dispatchAlert() below switches this window into "capture clicks" mode whenever
+  // a dismissable alert is shown, so the user can reach the Dismiss button. A
+  // fullscreen transparent window in capture mode swallows mouse input across the
+  // ENTIRE display, not just the visible banner — that was the previous bug ("covers
+  // every other app, can't use your computer"). Confining the window to the banner
+  // strip means capture mode can only ever block clicks within that strip; everything
+  // below it stays fully interactive regardless of alert state.
+  const { width } = screen.getPrimaryDisplay().workAreaSize;
+  const BANNER_HEIGHT = 260; // generous for title + the longest alert message + padding
+
   overlayWindow = new BrowserWindow({
+    x: 0,
+    y: 0,
+    width,
+    height: BANNER_HEIGHT,
     transparent: true,
     frame: false,
     alwaysOnTop: true,
     skipTaskbar: true,
+    resizable: false,
+    movable: false,
     focusable: false,
-    fullscreen: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -82,8 +111,10 @@ function createOverlayWindow() {
   });
 
   overlayWindow.loadFile(path.join(__dirname, 'renderer', 'overlay.html'));
-  // Pass-through mouse events so the user can still use the desktop normally.
-  // Temporarily lifted when an undismissable alert needs interaction.
+  // Mouse events pass through by default, so whatever's beneath the banner strip
+  // stays clickable. dispatchAlert() captures clicks ONLY while a dismissable
+  // alert's "Dismiss" button needs to be reachable — see the comment above for why
+  // that's now safe to do without locking up the rest of the screen.
   overlayWindow.setIgnoreMouseEvents(true, { forward: true });
 }
 
@@ -128,7 +159,12 @@ async function runScreenAnalysis() {
 }
 
 function startScreenAnalysisLoop() {
-  const interval = parseInt(process.env.SCAMGUARD_POLL_INTERVAL) || 15000;
+  // This is the ONLY loop that triggers OpenAI calls (each cache-miss screenshot runs
+  // 4 LLM stages — see backend/app/agents/pipeline.py). 5 minutes keeps the protection
+  // responsive without re-paying for a near-identical screen every few seconds.
+  // Override via SCAMGUARD_POLL_INTERVAL (ms) if you need tighter/looser cadence —
+  // see scripts/start-demo.ps1 for the demo-speed value.
+  const interval = parseInt(process.env.SCAMGUARD_POLL_INTERVAL) || 5 * 60 * 1000;
   screenPollTimer = setInterval(runScreenAnalysis, interval);
 }
 
@@ -136,7 +172,10 @@ function startScreenAnalysisLoop() {
 // Process scanner (Pillar 2)
 // ---------------------------------------------------------------------------
 
+const PROCESS_ALERT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_PROCESS_COOLDOWN) || 60_000;
+
 async function runProcessScan() {
+  if (process.platform !== 'win32') return;
   if (!detectorState.processScanner.enabled) return;
   try {
     const found = await scanProcesses();
@@ -147,7 +186,16 @@ async function runProcessScan() {
     if (found.length) reportDetections(found); // persist to backend, fire-and-forget
 
     for (const proc of found) {
-      const type = proc.category === 'remote_access' ? 'REMOTE_ACCESS_TOOL' : 'SUSPICIOUS_PROCESS';
+      const key = proc.name.toLowerCase();
+      const last = processAlertCooldown.get(key) || 0;
+      if (Date.now() - last < PROCESS_ALERT_COOLDOWN_MS) continue;
+      processAlertCooldown.set(key, Date.now());
+
+      let type;
+      if (proc.category === 'remote_access') type = 'REMOTE_ACCESS_TOOL';
+      else if (proc.category === 'screen_capture') type = 'SCREEN_RECORDING_ACTIVE';
+      else type = 'SUSPICIOUS_PROCESS';
+
       dispatchAlert(type, { process: proc });
     }
   } catch (err) {
@@ -161,23 +209,148 @@ function startProcessScanLoop() {
 }
 
 // ---------------------------------------------------------------------------
+// Browser title scan (Pillar 2b — detect banking in the user's real browser)
+// ---------------------------------------------------------------------------
+
+const BANKING_ALERT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_BANKING_COOLDOWN) || 60_000;
+
+async function runBrowserTitleScan() {
+  if (!detectorState.networkMonitor.enabled) return;
+  try {
+    const match = await scanBrowserTitles();
+    if (!match) return;
+
+    const last = bankingAlertCooldown.get(match.domain) || 0;
+    if (Date.now() - last < BANKING_ALERT_COOLDOWN_MS) return;
+    bankingAlertCooldown.set(match.domain, Date.now());
+
+    detectorState.networkMonitor.lastRun = Date.now();
+    detectorState.networkMonitor.lastResult = match;
+    dispatchAlert('BANKING_SITE', { ...match, source: 'browser_title' });
+    checkBankingContext(match);
+  } catch (err) {
+    console.error('[browserTitleScan]', err.message);
+  }
+}
+
+function startBrowserTitleScanLoop() {
+  const interval = parseInt(process.env.SCAMGUARD_BROWSER_TITLE_INTERVAL) || 8000;
+  browserTitleScanTimer = setInterval(runBrowserTitleScan, interval);
+}
+
+// ---------------------------------------------------------------------------
+// Connection scan (Pillar 2c — active external TCP connections by process)
+// ---------------------------------------------------------------------------
+
+const CONNECTION_ALERT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_CONNECTION_COOLDOWN) || 120_000;
+
+async function runConnectionScan() {
+  if (process.platform !== 'win32') return;
+  if (!detectorState.processScanner.enabled) return;
+  try {
+    const connections = await scanActiveConnections();
+
+    detectorState.processScanner.lastRun = Date.now();
+
+    for (const conn of connections) {
+      if (!isSuspiciousProcess(conn.processName)) continue;
+
+      const key = conn.processName.toLowerCase();
+      const last = connectionAlertCooldown.get(key) || 0;
+      if (Date.now() - last < CONNECTION_ALERT_COOLDOWN_MS) continue;
+      connectionAlertCooldown.set(key, Date.now());
+
+      dispatchAlert('REMOTE_ACCESS_CONNECTED', {
+        process: {
+          name: conn.processName,
+          pid: conn.pid,
+          category: getCategoryForProcess(key),
+        },
+        connection: {
+          remoteAddress: conn.remoteAddress,
+          remotePort: conn.remotePort,
+        },
+      });
+    }
+  } catch (err) {
+    console.error('[connectionScan]', err.message);
+  }
+}
+
+function startConnectionScanLoop() {
+  const interval = parseInt(process.env.SCAMGUARD_CONNECTION_INTERVAL) || 15000;
+  connectionScanTimer = setInterval(runConnectionScan, interval);
+}
+
+// ---------------------------------------------------------------------------
+// Banking + remote-access correlation — the single highest-value alert.
+// Visiting a bank is normal. A remote tool running is sometimes normal. The
+// two together, at the same moment, is the textbook tech-support-scam pattern:
+// "stay on the phone while I watch you log into your bank." Neither signal
+// alone justifies a critical non-dismissable alert; together they do.
+// ---------------------------------------------------------------------------
+
+const BANKING_CONTEXT_COOLDOWN_MS = parseInt(process.env.SCAMGUARD_BANKING_CONTEXT_COOLDOWN) || 90_000;
+
+function siteKeyFor(match) {
+  return (match.hostname || match.domain || '').toLowerCase();
+}
+
+async function checkBankingContext(bankingMatch) {
+  if (process.platform !== 'win32') return;
+  if (!detectorState.networkMonitor.enabled || !detectorState.processScanner.enabled) return;
+
+  const site = siteKeyFor(bankingMatch);
+  if (!site) return;
+
+  // One correlation check per site per 90s — this runs two fresh system scans,
+  // so it's deliberately throttled independent of how often banking fires
+  // (webRequest can fire many times per page load).
+  const last = bankingContextCooldown.get(site) || 0;
+  if (Date.now() - last < BANKING_CONTEXT_COOLDOWN_MS) return;
+  bankingContextCooldown.set(site, Date.now());
+
+  try {
+    const [processes, connections] = await Promise.all([scanProcesses(), scanActiveConnections()]);
+
+    const remoteProc = processes.find((p) => p.category === 'remote_access');
+    const remoteConn = connections.find(
+      (c) => isSuspiciousProcess(c.processName) && getCategoryForProcess(c.processName.toLowerCase()) === 'remote_access'
+    );
+    if (!remoteProc && !remoteConn) return;
+
+    // Prefer the active-connection signal — "connected right now" is strictly
+    // more alarming than "merely installed and running."
+    const proc = remoteConn
+      ? { name: remoteConn.processName, pid: remoteConn.pid, category: 'remote_access' }
+      : remoteProc;
+
+    dispatchAlert('BANKING_WITH_REMOTE_ACCESS', {
+      site,
+      process: proc,
+      activeConnection: !!remoteConn,
+    });
+  } catch (err) {
+    console.error('[bankingContext]', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Network monitor (Pillar 3 — Layer 1 webRequest + Layer 2 sidecar)
 // ---------------------------------------------------------------------------
 
 function startNetworkMonitor() {
   if (!detectorState.networkMonitor.enabled) return;
 
-  startWebRequestMonitor((match) => {
+  const handleMatch = (match) => {
     detectorState.networkMonitor.lastRun = Date.now();
     detectorState.networkMonitor.lastResult = match;
     dispatchAlert(match.type, match);
-  });
+    if (match.type === 'BANKING_SITE') checkBankingContext(match);
+  };
 
-  startSniffer((match) => {
-    detectorState.networkMonitor.lastRun = Date.now();
-    detectorState.networkMonitor.lastResult = match;
-    dispatchAlert(match.type, match);
-  });
+  startWebRequestMonitor(handleMatch);
+  startSniffer(handleMatch);
 }
 
 // ---------------------------------------------------------------------------
@@ -275,6 +448,7 @@ ipcMain.handle('get-app-version', () => app.getVersion());
 
 app.whenReady().then(async () => {
   createMainWindow();
+  createOverlayWindow();
   setupAutoUpdater();
 
   // Fetch threat intel from backend before starting detectors so the live rules
@@ -284,6 +458,8 @@ app.whenReady().then(async () => {
   startNetworkMonitor();
   startScreenAnalysisLoop();
   startProcessScanLoop();
+  startBrowserTitleScanLoop();
+  startConnectionScanLoop();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
@@ -297,6 +473,8 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   clearInterval(screenPollTimer);
   clearInterval(processScanTimer);
+  clearInterval(browserTitleScanTimer);
+  clearInterval(connectionScanTimer);
   stopSniffer();
   if (process.platform !== 'darwin') app.quit();
 });

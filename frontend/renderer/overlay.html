@@ -2,41 +2,8 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'" />
-  <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    body { background: transparent; font-family: Arial, sans-serif; overflow: hidden; }
-
-    #alert {
-      display: none;
-      position: fixed;
-      top: 0; left: 0; right: 0;
-      padding: 24px 40px;
-      color: white;
-      animation: slideDown 0.3s ease;
-    }
-    @keyframes slideDown {
-      from { transform: translateY(-100%); }
-      to   { transform: translateY(0); }
-    }
-
-    #alert.critical { background: rgba(176, 0, 0, 0.96); }
-    #alert.warning  { background: rgba(180, 90, 0, 0.94); }
-    #alert.info     { background: rgba(20, 80, 160, 0.92); }
-
-    .alert-title   { font-size: 28px; font-weight: bold; margin-bottom: 8px; }
-    .alert-message { font-size: 22px; line-height: 1.4; }
-    .alert-dismiss {
-      float: right;
-      cursor: pointer;
-      font-size: 18px;
-      padding: 4px 12px;
-      border: 2px solid rgba(255,255,255,0.6);
-      border-radius: 4px;
-      margin-left: 20px;
-    }
-    .alert-dismiss:hover { background: rgba(255,255,255,0.2); }
-  </style>
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self'" />
+  <link rel="stylesheet" href="overlay.css" />
 </head>
 <body>
   <div id="alert">

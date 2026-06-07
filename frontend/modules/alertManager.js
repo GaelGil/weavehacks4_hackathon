@@ -1,4 +1,7 @@
-const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://localhost:8000';
+// 127.0.0.1, NOT localhost: on Windows, "localhost" resolves to the IPv6
+// loopback ::1 first, and Docker Desktop/WSL2's port-forwarding for ::1 hangs
+// indefinitely instead of refusing — every fetch() below would silently freeze.
+const BACKEND_URL = process.env.SCAMGUARD_BACKEND_URL || 'http://127.0.0.1:8000';
 
 const ALERT_CONFIG = {
   REMOTE_ACCESS_TOOL: {
@@ -36,6 +39,40 @@ const ALERT_CONFIG = {
     dismissable: true,
     autoDismissMs: 15000,
   },
+  SCREEN_RECORDING_ACTIVE: {
+    severity: 'warning',
+    title: 'Screen Recording Software is Running',
+    message: "A screen recording program is active. If you didn't start it, your screen may be visible to others.",
+    messageBuilder: (data) => {
+      const name = data?.process?.name || 'A screen recording program';
+      return `${name} is running. If you didn't start it, or if someone asked you to open it, your screen may be visible to others.`;
+    },
+    dismissable: true,
+    autoDismissMs: 20000,
+  },
+  BANKING_WITH_REMOTE_ACCESS: {
+    severity: 'critical',
+    title: 'DANGER: Remote Access Active While Banking',
+    message: 'A remote access program is running while you are on a banking website. This is a common scam pattern. Stop — do not enter any information — and call a trusted family member.',
+    messageBuilder: (data) => {
+      const name = data?.process?.name || 'A remote access program';
+      const liveNote = data?.activeConnection ? ' and is connected to the internet right now' : '';
+      return `${name} is running${liveNote} while you are on your banking website. This is a common scam pattern — STOP. Do not enter any passwords or account numbers. Close ${name} and call a trusted family member before continuing.`;
+    },
+    dismissable: false,
+    soundAlert: true,
+  },
+  REMOTE_ACCESS_CONNECTED: {
+    severity: 'critical',
+    title: 'DANGER: Remote Access Program Is Connected',
+    message: 'A remote access program has an active internet connection. Someone may be watching your computer RIGHT NOW. Close it immediately and call a trusted family member.',
+    messageBuilder: (data) => {
+      const name = data?.process?.name || 'A remote access program';
+      return `${name} has an active internet connection. Someone may be watching your computer RIGHT NOW. Close it immediately and call a trusted family member.`;
+    },
+    dismissable: false,
+    soundAlert: true,
+  },
 };
 
 // In-memory ring buffer for immediate UI queries
@@ -63,7 +100,8 @@ async function persistAlert(alert) {
 
 function buildAlert(type, data) {
   const config = ALERT_CONFIG[type] || ALERT_CONFIG.SCREEN_ANALYSIS;
-  const alert = { ...config, type, timestamp: Date.now(), data };
+  const message = config.messageBuilder ? config.messageBuilder(data) : config.message;
+  const alert = { ...config, message, type, timestamp: Date.now(), data };
 
   alertHistory.push(alert);
   if (alertHistory.length > MAX_HISTORY) alertHistory.shift();

@@ -11,7 +11,7 @@ class Settings(BaseSettings):
 
     # OpenAI
     openai_api_key: str = ""
-    openai_model: str = "gpt-4o"  # reasoning/judgment (advisor, researcher)
+    openai_model: str = "gpt-4o-mini"  # reasoning/judgment (advisor, researcher)
     openai_vision_model: str = (
         "gpt-4o-mini"  # cheap screen scraping (collector, redactor)
     )
@@ -26,7 +26,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://localhost:6379"
     API_V1_STR: str = "/api/v1"
     # Server
-    scan_interval_seconds: int = 30
+    # Informational only (surfaced via /health) — the actual cadence is driven by
+    # SCAMGUARD_POLL_INTERVAL in the Electron app (frontend/main.js). Keep these in sync.
+    scan_interval_seconds: int = 300
     allowed_origins: str = "http://localhost:5173,http://localhost:4000"
     WANDB_WEAVE_PROJECT: str | None = None
     WANDB_API_KEY: str | None = None

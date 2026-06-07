@@ -1,6 +1,6 @@
 import type { ScanResult } from "../types";
 
-const BACKEND = "http://localhost:8000/api/v1/scans";
+const BACKEND = "http://127.0.0.1:8000/api/v1/scans";
 
 export async function scanScreen(
   imageB64: string | null,
