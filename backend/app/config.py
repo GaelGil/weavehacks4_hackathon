@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     allowed_origins: str = "http://localhost:5173,http://localhost:4000"
     WANDB_WEAVE_PROJECT: str | None = None
     WANDB_API_KEY: str | None = None
+    REDIS_URL: str | None = None
 
     @property
     def origins(self) -> list[str]:
