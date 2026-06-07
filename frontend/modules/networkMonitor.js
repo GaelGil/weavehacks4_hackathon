@@ -1,5 +1,5 @@
 const { session } = require('electron');
-const { spawn } = require('child_process');
+const { spawn, exec } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
@@ -134,4 +134,52 @@ function stopSniffer() {
   }
 }
 
-module.exports = { initialize, startWebRequestMonitor, startSniffer, stopSniffer, checkUrl };
+// ---------------------------------------------------------------------------
+// Active TCP connection scan — find established external connections by process
+// ---------------------------------------------------------------------------
+
+// Strip IPv4-mapped IPv6 prefix (::ffff:1.2.3.4 → 1.2.3.4) then reject
+// loopback, RFC-1918, link-local, and unspecified addresses.
+function isExternalIp(addr) {
+  if (!addr) return false;
+  const ip = addr.replace(/^::ffff:/i, '');
+  return !/^(127\.|10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|0\.0\.0\.0$|::1$|fe80:)/i.test(ip);
+}
+
+// Returns every established TCP connection whose remote IP is external.
+// Builds a PID→name map first (one Get-Process call) then joins — avoids
+// the O(n) per-connection Get-Process call that makes this noticeably slow.
+function scanActiveConnections() {
+  return new Promise((resolve) => {
+    const cmd =
+      'powershell.exe -NoProfile -NonInteractive -Command "' +
+      '$pm=@{};' +
+      'Get-Process -EA SilentlyContinue|ForEach-Object{$pm[$_.Id]=$_.Name};' +
+      'Get-NetTCPConnection -State Established -EA SilentlyContinue|' +
+      'ForEach-Object{[PSCustomObject]@{r=$_.RemoteAddress;rp=$_.RemotePort;' +
+      "pid=$_.OwningProcess;n=if($pm[$_.OwningProcess]){$pm[$_.OwningProcess]}else{'?'}}}|" +
+      'ConvertTo-Json -Compress"';
+
+    exec(cmd, { timeout: 15000 }, (err, stdout) => {
+      if (err) { resolve([]); return; }
+      let rows;
+      try {
+        rows = JSON.parse(stdout.trim());
+        if (!Array.isArray(rows)) rows = rows ? [rows] : [];
+      } catch (_) { resolve([]); return; }
+
+      resolve(
+        rows
+          .filter((c) => c && isExternalIp(c.r))
+          .map((c) => ({
+            remoteAddress: c.r,
+            remotePort: Number(c.rp),
+            pid: Number(c.pid),
+            processName: c.n || '?',
+          }))
+      );
+    });
+  });
+}
+
+module.exports = { initialize, startWebRequestMonitor, startSniffer, stopSniffer, checkUrl, scanActiveConnections };

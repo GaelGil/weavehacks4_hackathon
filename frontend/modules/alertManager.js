@@ -36,6 +36,17 @@ const ALERT_CONFIG = {
     dismissable: true,
     autoDismissMs: 15000,
   },
+  REMOTE_ACCESS_CONNECTED: {
+    severity: 'critical',
+    title: 'DANGER: Remote Access Program Is Connected',
+    message: 'A remote access program has an active internet connection. Someone may be watching your computer RIGHT NOW. Close it immediately and call a trusted family member.',
+    messageBuilder: (data) => {
+      const name = data?.process?.name || 'A remote access program';
+      return `${name} has an active internet connection. Someone may be watching your computer RIGHT NOW. Close it immediately and call a trusted family member.`;
+    },
+    dismissable: false,
+    soundAlert: true,
+  },
 };
 
 // In-memory ring buffer for immediate UI queries
@@ -63,7 +74,8 @@ async function persistAlert(alert) {
 
 function buildAlert(type, data) {
   const config = ALERT_CONFIG[type] || ALERT_CONFIG.SCREEN_ANALYSIS;
-  const alert = { ...config, type, timestamp: Date.now(), data };
+  const message = config.messageBuilder ? config.messageBuilder(data) : config.message;
+  const alert = { ...config, message, type, timestamp: Date.now(), data };
 
   alertHistory.push(alert);
   if (alertHistory.length > MAX_HISTORY) alertHistory.shift();

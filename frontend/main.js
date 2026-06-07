@@ -18,8 +18,8 @@ try {
 
 const { captureScreen } = require('./modules/screenCapture');
 const { analyzeScreen } = require('./modules/llmAnalyzer');
-const { initialize: initProcessScanner, scanProcesses, reportDetections, scanBrowserTitles } = require('./modules/processScanner');
-const { initialize: initNetworkMonitor, startWebRequestMonitor, startSniffer, stopSniffer } = require('./modules/networkMonitor');
+const { initialize: initProcessScanner, scanProcesses, reportDetections, scanBrowserTitles, isSuspiciousProcess, getCategoryForProcess } = require('./modules/processScanner');
+const { initialize: initNetworkMonitor, startWebRequestMonitor, startSniffer, stopSniffer, scanActiveConnections } = require('./modules/networkMonitor');
 const { buildAlert, getAlertHistory } = require('./modules/alertManager');
 
 // ---------------------------------------------------------------------------
@@ -36,9 +36,12 @@ let overlayWindow;
 let screenPollTimer;
 let processScanTimer;
 let browserTitleScanTimer;
+let connectionScanTimer;
 
 // Suppress repeat banking alerts for the same domain within this window.
 const bankingAlertCooldown = new Map();
+// Suppress repeat connection alerts for the same process name.
+const connectionAlertCooldown = new Map();
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -194,6 +197,50 @@ function startBrowserTitleScanLoop() {
 }
 
 // ---------------------------------------------------------------------------
+// Connection scan (Pillar 2c — active external TCP connections by process)
+// ---------------------------------------------------------------------------
+
+const CONNECTION_ALERT_COOLDOWN_MS = 120_000;
+
+async function runConnectionScan() {
+  if (process.platform !== 'win32') return;
+  if (!detectorState.processScanner.enabled) return;
+  try {
+    const connections = await scanActiveConnections();
+
+    detectorState.processScanner.lastRun = Date.now();
+
+    for (const conn of connections) {
+      if (!isSuspiciousProcess(conn.processName)) continue;
+
+      const key = conn.processName.toLowerCase();
+      const last = connectionAlertCooldown.get(key) || 0;
+      if (Date.now() - last < CONNECTION_ALERT_COOLDOWN_MS) continue;
+      connectionAlertCooldown.set(key, Date.now());
+
+      dispatchAlert('REMOTE_ACCESS_CONNECTED', {
+        process: {
+          name: conn.processName,
+          pid: conn.pid,
+          category: getCategoryForProcess(key),
+        },
+        connection: {
+          remoteAddress: conn.remoteAddress,
+          remotePort: conn.remotePort,
+        },
+      });
+    }
+  } catch (err) {
+    console.error('[connectionScan]', err.message);
+  }
+}
+
+function startConnectionScanLoop() {
+  const interval = parseInt(process.env.SCAMGUARD_CONNECTION_INTERVAL) || 15000;
+  connectionScanTimer = setInterval(runConnectionScan, interval);
+}
+
+// ---------------------------------------------------------------------------
 // Network monitor (Pillar 3 — Layer 1 webRequest + Layer 2 sidecar)
 // ---------------------------------------------------------------------------
 
@@ -318,6 +365,7 @@ app.whenReady().then(async () => {
   startScreenAnalysisLoop();
   startProcessScanLoop();
   startBrowserTitleScanLoop();
+  startConnectionScanLoop();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
@@ -332,6 +380,7 @@ app.on('window-all-closed', () => {
   clearInterval(screenPollTimer);
   clearInterval(processScanTimer);
   clearInterval(browserTitleScanTimer);
+  clearInterval(connectionScanTimer);
   stopSniffer();
   if (process.platform !== 'darwin') app.quit();
 });

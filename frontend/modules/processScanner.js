@@ -49,6 +49,10 @@ function getCategoryForProcess(nameLower) {
   return 'suspicious_tool';
 }
 
+function isSuspiciousProcess(name) {
+  return allBadProcesses.has(name.toLowerCase());
+}
+
 function parseWmicOutput(stdout) {
   const found = [];
   const lines = stdout.trim().split('\n').slice(2); // skip header rows
@@ -155,4 +159,4 @@ function scanBrowserTitles() {
   });
 }
 
-module.exports = { initialize, scanProcesses, reportDetections, scanBrowserTitles };
+module.exports = { initialize, scanProcesses, reportDetections, scanBrowserTitles, isSuspiciousProcess, getCategoryForProcess };
