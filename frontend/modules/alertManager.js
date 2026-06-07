@@ -47,6 +47,18 @@ const ALERT_CONFIG = {
     dismissable: true,
     autoDismissMs: 20000,
   },
+  BANKING_WITH_REMOTE_ACCESS: {
+    severity: 'critical',
+    title: 'DANGER: Remote Access Active While Banking',
+    message: 'A remote access program is running while you are on a banking website. This is a common scam pattern. Stop — do not enter any information — and call a trusted family member.',
+    messageBuilder: (data) => {
+      const name = data?.process?.name || 'A remote access program';
+      const liveNote = data?.activeConnection ? ' and is connected to the internet right now' : '';
+      return `${name} is running${liveNote} while you are on your banking website. This is a common scam pattern — STOP. Do not enter any passwords or account numbers. Close ${name} and call a trusted family member before continuing.`;
+    },
+    dismissable: false,
+    soundAlert: true,
+  },
   REMOTE_ACCESS_CONNECTED: {
     severity: 'critical',
     title: 'DANGER: Remote Access Program Is Connected',

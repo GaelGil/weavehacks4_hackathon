@@ -44,6 +44,8 @@ const bankingAlertCooldown = new Map();
 const connectionAlertCooldown = new Map();
 // Suppress repeat process alerts for the same process name.
 const processAlertCooldown = new Map();
+// Suppress repeat banking+remote-access correlation checks for the same site.
+const bankingContextCooldown = new Map();
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -200,6 +202,7 @@ async function runBrowserTitleScan() {
     detectorState.networkMonitor.lastRun = Date.now();
     detectorState.networkMonitor.lastResult = match;
     dispatchAlert('BANKING_SITE', { ...match, source: 'browser_title' });
+    checkBankingContext(match);
   } catch (err) {
     console.error('[browserTitleScan]', err.message);
   }
@@ -255,23 +258,74 @@ function startConnectionScanLoop() {
 }
 
 // ---------------------------------------------------------------------------
+// Banking + remote-access correlation — the single highest-value alert.
+// Visiting a bank is normal. A remote tool running is sometimes normal. The
+// two together, at the same moment, is the textbook tech-support-scam pattern:
+// "stay on the phone while I watch you log into your bank." Neither signal
+// alone justifies a critical non-dismissable alert; together they do.
+// ---------------------------------------------------------------------------
+
+const BANKING_CONTEXT_COOLDOWN_MS = 90_000;
+
+function siteKeyFor(match) {
+  return (match.hostname || match.domain || '').toLowerCase();
+}
+
+async function checkBankingContext(bankingMatch) {
+  if (process.platform !== 'win32') return;
+  if (!detectorState.networkMonitor.enabled || !detectorState.processScanner.enabled) return;
+
+  const site = siteKeyFor(bankingMatch);
+  if (!site) return;
+
+  // One correlation check per site per 90s — this runs two fresh system scans,
+  // so it's deliberately throttled independent of how often banking fires
+  // (webRequest can fire many times per page load).
+  const last = bankingContextCooldown.get(site) || 0;
+  if (Date.now() - last < BANKING_CONTEXT_COOLDOWN_MS) return;
+  bankingContextCooldown.set(site, Date.now());
+
+  try {
+    const [processes, connections] = await Promise.all([scanProcesses(), scanActiveConnections()]);
+
+    const remoteProc = processes.find((p) => p.category === 'remote_access');
+    const remoteConn = connections.find(
+      (c) => isSuspiciousProcess(c.processName) && getCategoryForProcess(c.processName.toLowerCase()) === 'remote_access'
+    );
+    if (!remoteProc && !remoteConn) return;
+
+    // Prefer the active-connection signal — "connected right now" is strictly
+    // more alarming than "merely installed and running."
+    const proc = remoteConn
+      ? { name: remoteConn.processName, pid: remoteConn.pid, category: 'remote_access' }
+      : remoteProc;
+
+    dispatchAlert('BANKING_WITH_REMOTE_ACCESS', {
+      site,
+      process: proc,
+      activeConnection: !!remoteConn,
+    });
+  } catch (err) {
+    console.error('[bankingContext]', err.message);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Network monitor (Pillar 3 — Layer 1 webRequest + Layer 2 sidecar)
 // ---------------------------------------------------------------------------
 
 function startNetworkMonitor() {
   if (!detectorState.networkMonitor.enabled) return;
 
-  startWebRequestMonitor((match) => {
+  const handleMatch = (match) => {
     detectorState.networkMonitor.lastRun = Date.now();
     detectorState.networkMonitor.lastResult = match;
     dispatchAlert(match.type, match);
-  });
+    if (match.type === 'BANKING_SITE') checkBankingContext(match);
+  };
 
-  startSniffer((match) => {
-    detectorState.networkMonitor.lastRun = Date.now();
-    detectorState.networkMonitor.lastResult = match;
-    dispatchAlert(match.type, match);
-  });
+  startWebRequestMonitor(handleMatch);
+  startSniffer(handleMatch);
 }
 
 // ---------------------------------------------------------------------------
