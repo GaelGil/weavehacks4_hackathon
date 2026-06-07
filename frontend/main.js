@@ -18,7 +18,7 @@ try {
 
 const { captureScreen } = require('./modules/screenCapture');
 const { analyzeScreen } = require('./modules/llmAnalyzer');
-const { initialize: initProcessScanner, scanProcesses, reportDetections } = require('./modules/processScanner');
+const { initialize: initProcessScanner, scanProcesses, reportDetections, scanBrowserTitles } = require('./modules/processScanner');
 const { initialize: initNetworkMonitor, startWebRequestMonitor, startSniffer, stopSniffer } = require('./modules/networkMonitor');
 const { buildAlert, getAlertHistory } = require('./modules/alertManager');
 
@@ -35,6 +35,10 @@ let mainWindow;
 let overlayWindow;
 let screenPollTimer;
 let processScanTimer;
+let browserTitleScanTimer;
+
+// Suppress repeat banking alerts for the same domain within this window.
+const bankingAlertCooldown = new Map();
 
 // ---------------------------------------------------------------------------
 // Window creation
@@ -161,6 +165,35 @@ function startProcessScanLoop() {
 }
 
 // ---------------------------------------------------------------------------
+// Browser title scan (Pillar 2b — detect banking in the user's real browser)
+// ---------------------------------------------------------------------------
+
+const BANKING_ALERT_COOLDOWN_MS = 60_000;
+
+async function runBrowserTitleScan() {
+  if (!detectorState.networkMonitor.enabled) return;
+  try {
+    const match = await scanBrowserTitles();
+    if (!match) return;
+
+    const last = bankingAlertCooldown.get(match.domain) || 0;
+    if (Date.now() - last < BANKING_ALERT_COOLDOWN_MS) return;
+    bankingAlertCooldown.set(match.domain, Date.now());
+
+    detectorState.networkMonitor.lastRun = Date.now();
+    detectorState.networkMonitor.lastResult = match;
+    dispatchAlert('BANKING_SITE', { ...match, source: 'browser_title' });
+  } catch (err) {
+    console.error('[browserTitleScan]', err.message);
+  }
+}
+
+function startBrowserTitleScanLoop() {
+  const interval = parseInt(process.env.SCAMGUARD_BROWSER_TITLE_INTERVAL) || 8000;
+  browserTitleScanTimer = setInterval(runBrowserTitleScan, interval);
+}
+
+// ---------------------------------------------------------------------------
 // Network monitor (Pillar 3 — Layer 1 webRequest + Layer 2 sidecar)
 // ---------------------------------------------------------------------------
 
@@ -284,6 +317,7 @@ app.whenReady().then(async () => {
   startNetworkMonitor();
   startScreenAnalysisLoop();
   startProcessScanLoop();
+  startBrowserTitleScanLoop();
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createMainWindow();
@@ -297,6 +331,7 @@ app.whenReady().then(async () => {
 app.on('window-all-closed', () => {
   clearInterval(screenPollTimer);
   clearInterval(processScanTimer);
+  clearInterval(browserTitleScanTimer);
   stopSniffer();
   if (process.platform !== 'darwin') app.quit();
 });

@@ -9,6 +9,10 @@ const localBlocklist = JSON.parse(
   fs.readFileSync(path.join(__dirname, '../resources/blocklist.json'), 'utf8')
 );
 
+const bankingDomains = JSON.parse(
+  fs.readFileSync(path.join(__dirname, '../resources/banking-domains.json'), 'utf8')
+);
+
 let remoteAccessLower = localBlocklist.remote_access.map((p) => p.toLowerCase());
 let suspiciousToolsLower = localBlocklist.suspicious_tools.map((p) => p.toLowerCase());
 let allBadProcesses = new Set([...remoteAccessLower, ...suspiciousToolsLower]);
@@ -109,4 +113,46 @@ async function scanProcesses() {
   }
 }
 
-module.exports = { initialize, scanProcesses, reportDetections };
+// ---------------------------------------------------------------------------
+// Browser window title scanning — detect banking sites open in any browser
+// ---------------------------------------------------------------------------
+
+// Returns the first banking match found across all open browser windows, or null.
+// Match strategy: check the lowercased window title for the full domain (e.g.
+// "chase.com") OR the brand name as a whole word (e.g. \bchase\b). The brand
+// approach catches "Chase Online Banking - Google Chrome"; the full-domain
+// approach catches tabs where Chrome shows "chase.com" in the title.
+function matchesBankingTitle(title, domain) {
+  const lower = title.toLowerCase();
+  if (lower.includes(domain)) return true;
+  const brand = domain.split('.')[0];
+  return new RegExp(`\\b${brand}\\b`).test(lower);
+}
+
+function scanBrowserTitles() {
+  return new Promise((resolve) => {
+    const cmd =
+      'powershell.exe -NoProfile -NonInteractive -Command ' +
+      '"Get-Process | Where-Object MainWindowTitle | Select-Object Name,MainWindowTitle | ConvertTo-Json -Compress"';
+    exec(cmd, { timeout: 8000 }, (err, stdout) => {
+      if (err) { resolve(null); return; }
+      let procs;
+      try {
+        procs = JSON.parse(stdout.trim());
+        if (!Array.isArray(procs)) procs = procs ? [procs] : [];
+      } catch (_) { resolve(null); return; }
+
+      for (const proc of procs) {
+        const title = proc.MainWindowTitle || '';
+        for (const domain of bankingDomains) {
+          if (matchesBankingTitle(title, domain)) {
+            return resolve({ domain, windowTitle: title, browser: proc.Name });
+          }
+        }
+      }
+      resolve(null);
+    });
+  });
+}
+
+module.exports = { initialize, scanProcesses, reportDetections, scanBrowserTitles };
