@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy import desc
@@ -7,7 +8,10 @@ from sqlmodel import Session, select
 
 from app.api.scamdetect.contact_store import get_contacts, save_contacts
 from app.api.scamdetect.openai_service import analyze_image_bytes, embed_text
-from app.api.scamdetect.redis_vector_store import RedisScamVectorStore
+from app.api.scamdetect.redis_vector_store import (
+    RedisScamVectorStore,
+    build_scam_embedding_text,
+)
 from app.api.websocket.ConnectionManager import manager
 from app.core.config import settings
 from app.database.db import engine
@@ -26,6 +30,8 @@ from app.database.schemas.Scan import (
     TrustedContactsResponse,
     VisionAnalysisResult,
 )
+from app.models import SimilarExample
+from app.services.redis_store import get_store
 from app.utils import send_email
 
 
@@ -168,8 +174,12 @@ class ScanService:
                     content_type=content_type,
                     source_text=scan.source_text,
                 )
-                similar_scams = _search_similar_scams(self.vector_store, analysis)
-                is_scam, risk_level = _finalize_verdict(analysis, similar_scams)
+                retrieval = _retrieve_similar_examples(self.vector_store, analysis)
+                similar_scams = _public_similar_scams(
+                    retrieval.curated_scams,
+                    retrieval.confirmed_scams,
+                )
+                is_scam, risk_level = _finalize_verdict(analysis, retrieval)
 
                 refreshed_scan = session.get(Scan, scan_id)
                 if not refreshed_scan:
@@ -190,7 +200,7 @@ class ScanService:
                 session.add(refreshed_scan)
                 session.commit()
 
-                if is_scam:
+                if _should_index_confirmed_scam(analysis, retrieval, is_scam):
                     self.vector_store.index_confirmed_scam(
                         scan_id=refreshed_scan.id,
                         session_id=refreshed_scan.session_id,
@@ -199,6 +209,7 @@ class ScanService:
                         detected_urls=analysis.detected_urls,
                         scam_type=analysis.scam_type,
                         risk_level=risk_level,
+                        embedding=retrieval.embedding,
                     )
 
                 await manager.send_scan_event(
@@ -237,31 +248,130 @@ class ScanService:
                 )
 
 
-def _search_similar_scams(
-    vector_store: RedisScamVectorStore, analysis: VisionAnalysisResult
-) -> list[dict[str, str | float | None]]:
-    if not analysis.is_potential_scam:
-        return []
-    embedding = embed_text(
-        "\n".join(
-            [
-                analysis.summary,
-                analysis.detected_text,
-                " ".join(analysis.detected_urls),
-                analysis.scam_type,
-            ]
-        )
+class ScamRetrievalResult:
+    def __init__(
+        self,
+        *,
+        embedding: list[float],
+        curated_scams: list[SimilarExample],
+        curated_legit: list[SimilarExample],
+        confirmed_scams: list[dict[str, str | float | None]],
+    ) -> None:
+        self.embedding = embedding
+        self.curated_scams = curated_scams
+        self.curated_legit = curated_legit
+        self.confirmed_scams = confirmed_scams
+
+
+def _candidate_embedding_text(analysis: VisionAnalysisResult) -> str:
+    return build_scam_embedding_text(
+        analysis.summary,
+        analysis.detected_text,
+        analysis.detected_urls,
+        analysis.scam_type,
     )
-    return vector_store.search_similar_scams(embedding=embedding)
+
+
+def _retrieve_similar_examples(
+    vector_store: RedisScamVectorStore, analysis: VisionAnalysisResult
+) -> ScamRetrievalResult:
+    if not analysis.is_potential_scam:
+        return ScamRetrievalResult(
+            embedding=[], curated_scams=[], curated_legit=[], confirmed_scams=[]
+        )
+
+    query_text = _candidate_embedding_text(analysis)
+    embedding = embed_text(query_text)
+    example_store = get_store()
+
+    curated_scams = example_store.search_examples(query_text, k=3, label="scam")
+    curated_legit = example_store.search_examples(query_text, k=3, label="legit")
+    confirmed_scams = vector_store.search_similar_scams(embedding=embedding)
+
+    return ScamRetrievalResult(
+        embedding=embedding,
+        curated_scams=curated_scams,
+        curated_legit=curated_legit,
+        confirmed_scams=confirmed_scams,
+    )
+
+
+def _public_similar_scams(
+    curated_scams: list[SimilarExample],
+    confirmed_scams: list[dict[str, str | float | None]],
+) -> list[dict[str, Any]]:
+    public_examples = [
+        {
+            "summary": example.text,
+            "scam_type": example.category or None,
+            "similarity_score": example.score,
+            "source": "curated_example",
+        }
+        for example in curated_scams
+    ]
+    return public_examples + confirmed_scams
+
+
+def _top_example_score(examples: list[SimilarExample]) -> float:
+    return max((example.score for example in examples), default=0.0)
+
+
+def _top_confirmed_score(matches: list[dict[str, str | float | None]]) -> float:
+    top_score = 0.0
+    for match in matches:
+        score = match.get("similarity_score")
+        if score is None:
+            continue
+        top_score = max(top_score, float(score))
+    return top_score
 
 
 def _finalize_verdict(
-    analysis: VisionAnalysisResult, similar_scams: list[dict[str, str | float | None]]
+    analysis: VisionAnalysisResult, retrieval: ScamRetrievalResult
 ) -> tuple[bool, ScanRiskLevel]:
-    if analysis.confidence_score >= 0.8:
+    if not analysis.is_potential_scam:
+        return False, ScanRiskLevel.LOW
+
+    best_curated_scam = _top_example_score(retrieval.curated_scams)
+    best_curated_legit = _top_example_score(retrieval.curated_legit)
+    best_confirmed_scam = _top_confirmed_score(retrieval.confirmed_scams)
+    best_scam = max(best_curated_scam, best_confirmed_scam)
+    similarity_margin = best_scam - best_curated_legit
+
+    if (
+        best_curated_legit >= 0.84
+        and best_curated_legit > best_scam
+        and analysis.confidence_score < 0.8
+    ):
+        return False, ScanRiskLevel.LOW
+
+    if analysis.confidence_score >= 0.8 and best_scam >= 0.78 and similarity_margin >= -0.02:
         return True, ScanRiskLevel.HIGH
-    if analysis.confidence_score >= 0.55 and similar_scams:
+
+    if best_scam >= 0.86 and similarity_margin >= 0.08:
         return True, ScanRiskLevel.HIGH
-    if analysis.is_potential_scam:
+
+    if (
+        analysis.confidence_score >= 0.65
+        and best_scam >= 0.78
+        and similarity_margin >= 0.05
+    ):
+        return True, ScanRiskLevel.HIGH
+
+    if best_curated_legit >= 0.75 and best_curated_legit >= best_scam + 0.05:
+        return False, ScanRiskLevel.LOW
+
+    if best_scam >= 0.7 or analysis.confidence_score >= 0.55:
         return False, ScanRiskLevel.MEDIUM
+
     return False, ScanRiskLevel.LOW
+
+
+def _should_index_confirmed_scam(
+    analysis: VisionAnalysisResult,
+    retrieval: ScamRetrievalResult,
+    is_scam: bool,
+) -> bool:
+    if not is_scam or analysis.confidence_score < 0.8:
+        return False
+    return _top_confirmed_score(retrieval.confirmed_scams) < 0.97

@@ -124,6 +124,17 @@ main { flex: 1; overflow: auto; display: flex; justify-content: center; padding:
 .verdict-label { font-size: 1.2rem; font-weight: 600; }
 .risk { font-size: 0.85rem; color: var(--muted); }
 
+.handled-by {
+  display: inline-block;
+  margin-top: 12px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  color: #9fd3ff;
+  background: #0d2236;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+}
+
 .advice { margin: 16px 0; line-height: 1.5; }
 .reasons { margin: 0 0 16px 20px; line-height: 1.6; }
 

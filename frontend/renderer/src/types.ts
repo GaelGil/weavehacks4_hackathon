@@ -26,6 +26,7 @@ export interface ScanResult {
   similar_scams: SimilarScam[];
   suggested_actions: SuggestedAction[];
   advice: string;
+  handled_by?: string; // which specialist agent the triage routed to
 }
 
 // Exposed from preload.js via contextBridge.

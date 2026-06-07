@@ -14,6 +14,11 @@ const verdictMeta: Record<string, { label: string; cls: string; emoji: string }>
   scam: { label: "Likely a scam", cls: "danger", emoji: "🚨" },
 };
 
+// "PhishingEmailSpecialist" -> "Phishing Email Specialist"
+function formatSpecialist(name: string): string {
+  return name.replace(/([a-z])([A-Z])/g, "$1 $2");
+}
+
 export default function ScanPanel({ scan, onScan }: Props) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +66,10 @@ export default function ScanPanel({ scan, onScan }: Props) {
               <div className="risk">risk {Math.round(scan.risk_score * 100)}%</div>
             </div>
           </div>
+
+          {scan.handled_by && (
+            <div className="handled-by">🔎 Handled by {formatSpecialist(scan.handled_by)}</div>
+          )}
 
           {scan.advice && <p className="advice">{scan.advice}</p>}
 

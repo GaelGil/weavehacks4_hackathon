@@ -119,6 +119,7 @@ class ScanResult(BaseModel):
     similar_scams: list[SimilarExample] = Field(default_factory=list)
     similar_legit: list[SimilarExample] = Field(default_factory=list)
     trusted_sender: bool | None = None  # True/False if the sender is on the trust list
+    handled_by: str | None = None  # which specialist agent the triage routed to
     # Transparency: surface the intermediate stages (great for the demo + Weave).
     facts: ScreenFacts | None = None
     research: ResearchFindings | None = None

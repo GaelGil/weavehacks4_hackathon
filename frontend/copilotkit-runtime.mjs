@@ -1,10 +1,10 @@
 // CopilotKit self-hosted runtime (Node).
 //
-// Architecture:  React (renderer) -> THIS runtime (:4000) -> FastAPI /copilotkit -> OpenAI Agents SDK
+// Architecture:  React (renderer) -> THIS runtime (:4000) -> OpenAI
 //
 // The renderer's <CopilotKit runtimeUrl="http://localhost:4000/copilotkit"> talks to this
-// server. This server uses an OpenAI adapter for the chat LLM and registers the FastAPI
-// backend as a remote endpoint so the `askScamAdvisor` action runs your Agents-SDK advisor.
+// server, which uses an OpenAI adapter for the chat LLM. The chat gets scam-scan context
+// and the "checkMyScreen" action from the React app (useCopilotReadable / useCopilotAction).
 //
 //   npm run copilot:runtime
 //
@@ -28,30 +28,33 @@ if (!process.env.OPENAI_API_KEY) {
 }
 
 const PORT = 4000;
-const FASTAPI_REMOTE = "http://127.0.0.1:8000/copilotkit";
 
 const app = express();
 
-// Was hardcoded to "gpt-4o" (the priciest chat model). Now driven by OPENAI_MODEL
-// (loaded from backend/.env above) so cost/quality is tuned in one place — and
-// defaults to the cheap gpt-4o-mini if the var is somehow missing.
-const serviceAdapter = new OpenAIAdapter({ model: process.env.OPENAI_MODEL || "gpt-4o-mini" });
-
-const runtime = new CopilotRuntime({
-  // Register the FastAPI Python endpoint so its actions/agents are available to the chat.
-  remoteEndpoints: [{ url: FASTAPI_REMOTE }],
+// Allow the Vite renderer (http://localhost:5173) to call this runtime cross-origin,
+// including the browser's CORS preflight (OPTIONS).
+app.use((req, res, next) => {
+  res.header("Access-Control-Allow-Origin", "*");
+  res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+  res.header("Access-Control-Allow-Headers", "*");
+  if (req.method === "OPTIONS") return res.sendStatus(204);
+  next();
 });
 
-app.use("/copilotkit", (req, res, next) => {
-  const handler = copilotRuntimeNodeHttpEndpoint({
-    endpoint: "/copilotkit",
-    runtime,
-    serviceAdapter,
-  });
-  return handler(req, res, next);
+// Chat is powered directly by OpenAI. No backend remote endpoint — the scam-scan
+// context and the "checkMyScreen" action come from the React app.
+const serviceAdapter = new OpenAIAdapter({ model: "gpt-4o" });
+const runtime = new CopilotRuntime();
+
+// Mount at root so the request path "/copilotkit" actually reaches the runtime's
+// GraphQL endpoint. Mounting under app.use("/copilotkit", ...) strips the path and 404s.
+const handler = copilotRuntimeNodeHttpEndpoint({
+  endpoint: "/copilotkit",
+  runtime,
+  serviceAdapter,
 });
+app.use(handler);
 
 app.listen(PORT, () => {
-  console.log(`CopilotKit runtime on http://localhost:${PORT}/copilotkit`);
-  console.log(`  -> bridging to FastAPI remote endpoint: ${FASTAPI_REMOTE}`);
+  console.log(`CopilotKit runtime on http://localhost:${PORT}/copilotkit (OpenAI chat)`);
 });

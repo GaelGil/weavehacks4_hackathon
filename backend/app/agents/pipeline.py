@@ -4,7 +4,8 @@ Stages:
   1. PrivacyRedactor  — flag sensitive info (runs in parallel with collection).
   2. CollectDataAgent — extract structured facts from the screen (observation only).
   3. ResearchAgent    — gather grounded comparison evidence (web + Redis scam/legit).
-  4. Advisor          — final verdict + advice + actions, with full context.
+  4. TriageAgent      — routes to a scam specialist (handoff) who makes the final
+                        verdict + tailored advice + actions, with full context.
 
 The whole pipeline is one Weave op, so each scan is a single trace tree with every
 agent call nested underneath.
@@ -18,7 +19,7 @@ import weave
 
 from ..models import ScanRequest, ScanResult
 from ..services.redis_store import RedisStore, get_store
-from . import advisor, collector, redactor, researcher
+from . import collector, redactor, researcher, specialists
 
 
 def _lookup_trust(store: RedisStore, sender_address: str) -> bool | None:
@@ -67,8 +68,8 @@ async def run_scan(req: ScanRequest) -> ScanResult:
     elif trusted is False:
         trust_note = f"The user previously marked '{facts.sender_address}' as UNTRUSTED. Weigh this as a real negative signal."
 
-    # 4. Final decision with the full picture (looks at the image again).
-    decision = await advisor.decide(
+    # 4. Triage -> specialist handoff makes the final decision with the full picture.
+    decision, handled_by = await specialists.decide_via_triage(
         req.image_b64,
         facts,
         research,
@@ -87,6 +88,7 @@ async def run_scan(req: ScanRequest) -> ScanResult:
         similar_scams=similar_scams,
         similar_legit=similar_legit,
         trusted_sender=trusted,
+        handled_by=handled_by,
         facts=facts,
         research=research,
     )

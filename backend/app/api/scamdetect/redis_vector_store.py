@@ -21,10 +21,13 @@ class RedisScamVectorStore:
         detected_urls: list[str],
         scam_type: str,
         risk_level: ScanRiskLevel,
+        embedding: list[float] | None = None,
     ) -> None:
         if self._client is None:
             return
-        embedding = self._embedding_for_index(summary, detected_text, detected_urls, scam_type)
+        embedding = embedding or self._embedding_for_index(
+            summary, detected_text, detected_urls, scam_type
+        )
         self._ensure_index(len(embedding))
         self._client.hset(
             f"scam:{scan_id}",
@@ -135,8 +138,14 @@ class RedisScamVectorStore:
         from app.api.scamdetect.openai_service import embed_text
 
         return embed_text(
-            "\n".join([summary, detected_text, " ".join(detected_urls), scam_type])
+            build_scam_embedding_text(summary, detected_text, detected_urls, scam_type)
         )
+
+
+def build_scam_embedding_text(
+    summary: str, detected_text: str, detected_urls: list[str], scam_type: str
+) -> str:
+    return "\n".join([summary, detected_text, " ".join(detected_urls), scam_type]).strip()
 
 
 def _parse_fields(fields: list[bytes]) -> dict[str, bytes]:
